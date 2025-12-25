@@ -9,7 +9,7 @@ class LessonContent {
   final String? date;
   final String? content;
 
-  // This is likely what was missing or causing the error in the .g file
+  // This list will hold the 7 days (Day 01 - Day 07)
   final List<LessonDay>? days;
 
   LessonContent({this.id, this.title, this.date, this.content, this.days});
@@ -25,10 +25,12 @@ class LessonDay {
   final String? id;
   final String? title;
   final String? date;
-  final String? index;
+  final String? index; // This is the "01", "02"... "07" used for navigation
 
   LessonDay({this.id, this.title, this.date, this.index});
 
   factory LessonDay.fromJson(Map<String, dynamic> json) =>
       _$LessonDayFromJson(json);
+
+  Map<String, dynamic> toJson() => _$LessonDayToJson(this);
 }

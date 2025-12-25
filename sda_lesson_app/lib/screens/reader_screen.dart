@@ -23,7 +23,14 @@ class ReaderScreen extends ConsumerWidget {
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
     return asyncContent.when(
-      data: (LessonContent content) {
+      data: (LessonContent? content) {
+        // Guard 1: Null Content Check
+        if (content == null) {
+          return const Scaffold(
+            body: Center(child: Text("No study material found for this day.")),
+          );
+        }
+
         return Scaffold(
           extendBodyBehindAppBar: true,
           drawer: !isDesktop
@@ -46,7 +53,7 @@ class ReaderScreen extends ConsumerWidget {
                 onPressed: () {
                   final plainText =
                       content.content?.replaceAll(RegExp(r'<[^>]*>'), '') ?? "";
-                  Share.share('${content.title}\n\n$plainText');
+                  Share.share('${content.title ?? lessonTitle}\n\n$plainText');
                 },
               ),
             ],
@@ -69,7 +76,8 @@ class ReaderScreen extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                content.date?.toUpperCase() ?? "",
+                                content.date?.toUpperCase() ??
+                                    "DATE NOT AVAILABLE",
                                 style: TextStyle(
                                   color: Colors.blueGrey[400],
                                   fontWeight: FontWeight.bold,
@@ -77,8 +85,10 @@ class ReaderScreen extends ConsumerWidget {
                                 ),
                               ),
                               const SizedBox(height: 15),
+                              // Guard 2: HTML Content Fallback
                               HtmlWidget(
-                                content.content ?? "",
+                                content.content ??
+                                    "<h3>Content coming soon.</h3>",
                                 textStyle: const TextStyle(
                                   fontSize: 19,
                                   height: 1.6,
@@ -115,19 +125,34 @@ class ReaderScreen extends ConsumerWidget {
           ),
         );
       },
-      loading: () =>
-          const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (err, stack) => Scaffold(body: Center(child: Text("Error: $err"))),
+      // Guard 3: Explicit Loading State
+      loading: () => const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator()),
+      ),
+      // Guard 4: Detailed Error State
+      error: (err, stack) => Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              "Something went wrong:\n$err",
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  // --- UPDATED: CHRONOLOGICAL NAVIGATION MENU ---
   Widget _buildNavigationMenu(
     BuildContext context,
     LessonContent content, {
     required bool isDrawer,
   }) {
-    final days = content.days ?? [];
+    // Guard 5: Safe mapping of days
+    final List<LessonDay> days = content.days ?? [];
 
     return Container(
       width: 300,
@@ -148,6 +173,7 @@ class ReaderScreen extends ConsumerWidget {
               right: 20,
               bottom: 20,
             ),
+            width: double.infinity,
             color: isDrawer ? Colors.blueGrey[900] : Colors.transparent,
             child: Text(
               lessonTitle,
@@ -165,7 +191,9 @@ class ReaderScreen extends ConsumerWidget {
               itemCount: days.length,
               itemBuilder: (context, index) {
                 final day = days[index];
-                final bool isCurrent = lessonIndex.endsWith(day.index ?? "");
+                // Guard 6: Null index comparison
+                final bool isCurrent =
+                    day.index != null && lessonIndex.endsWith(day.index!);
 
                 return ListTile(
                   selected: isCurrent,
@@ -174,7 +202,6 @@ class ReaderScreen extends ConsumerWidget {
                     horizontal: 20,
                     vertical: 4,
                   ),
-                  // Displays "1", "2", etc. next to the title
                   leading: Text(
                     "${index + 1}",
                     style: TextStyle(
@@ -183,7 +210,7 @@ class ReaderScreen extends ConsumerWidget {
                     ),
                   ),
                   title: Text(
-                    day.title ?? "Lesson Day",
+                    day.title ?? "Day ${index + 1}",
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: isCurrent
@@ -197,7 +224,7 @@ class ReaderScreen extends ConsumerWidget {
                       : null,
                   onTap: () {
                     if (isDrawer) Navigator.pop(context);
-                    _navigateToDay(context, day);
+                    if (day.index != null) _navigateToDay(context, day);
                   },
                 );
               },
@@ -208,16 +235,14 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  // --- UPDATED: BOTTOM NAV WITH COLORED BUTTONS ---
   Widget _buildBottomNavigation(BuildContext context, LessonContent content) {
-    final currentDayIndex =
-        content.days?.indexWhere(
-          (day) => lessonIndex.endsWith(day.index ?? ""),
-        ) ??
-        -1;
+    final days = content.days ?? [];
+    final currentDayIndex = days.indexWhere(
+      (day) => day.index != null && lessonIndex.endsWith(day.index!),
+    );
+
     final hasPrev = currentDayIndex > 0;
-    final hasNext =
-        content.days != null && currentDayIndex < content.days!.length - 1;
+    final hasNext = currentDayIndex != -1 && currentDayIndex < days.length - 1;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
@@ -238,10 +263,8 @@ class ReaderScreen extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () => _navigateToDay(
-                    context,
-                    content.days![currentDayIndex - 1],
-                  ),
+                  onPressed: () =>
+                      _navigateToDay(context, days[currentDayIndex - 1]),
                   child: const Text("PREVIOUS"),
                 ),
               ),
@@ -256,10 +279,8 @@ class ReaderScreen extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () => _navigateToDay(
-                    context,
-                    content.days![currentDayIndex + 1],
-                  ),
+                  onPressed: () =>
+                      _navigateToDay(context, days[currentDayIndex + 1]),
                   child: const Text("NEXT"),
                 ),
               ),
@@ -269,8 +290,87 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  // (Keeping _fetchBibleText, _showBibleVerse, _buildHeaderImage, and _navigateToDay as per your requirement)
+  Widget _buildHeaderImage(BuildContext context, LessonContent content) {
+    final parts = lessonIndex.split('/');
+    final quarterlyId = parts.length > 1 ? parts[1] : "quarterly";
+    final String proxiedUrl =
+        "http://127.0.0.1:8787/proxy-image?url=${Uri.encodeComponent("https://sabbath-school.adventech.io/api/v1/images/global/$quarterlyId/cover.png")}";
 
+    return Stack(
+      children: [
+        Container(
+          height: 350,
+          width: double.infinity,
+          color: Colors.blueGrey[900], // Background color while loading
+          child: Image.network(
+            proxiedUrl,
+            fit: BoxFit.cover,
+            // Guard 7: Image Error Handling
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: Colors.blueGrey[800],
+              child: const Icon(
+                Icons.image_not_supported,
+                color: Colors.white30,
+                size: 50,
+              ),
+            ),
+          ),
+        ),
+        Container(
+          height: 350,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withOpacity(0.6),
+                Colors.transparent,
+                Colors.white,
+              ],
+              stops: const [0.0, 0.4, 1.0],
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 20,
+          left: 20,
+          right: 20,
+          child: Text(
+            content.title ?? "",
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _navigateToDay(BuildContext context, LessonDay day) {
+    if (day.index == null) return;
+
+    final segments = lessonIndex.split('/');
+    if (segments.length < 2) return; // Prevent crash on malformed index
+
+    segments.removeLast();
+    segments.add(day.index!);
+
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation1, animation2) => ReaderScreen(
+          lessonIndex: segments.join('/'),
+          lessonTitle: lessonTitle,
+        ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  // --- Bible Verse Methods ---
   Future<String> _fetchBibleText(String verse) async {
     final cleanVerse = Uri.encodeComponent(verse.replaceAll('+', ' '));
     final url = Uri.parse('https://bible-api.com/$cleanVerse');
@@ -320,66 +420,6 @@ class ReaderScreen extends ConsumerWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeaderImage(BuildContext context, LessonContent content) {
-    final parts = lessonIndex.split('/');
-    final quarterlyId = parts.length > 1 ? parts[1] : "";
-    final String proxiedUrl =
-        "http://127.0.0.1:8787/proxy-image?url=${Uri.encodeComponent("https://sabbath-school.adventech.io/api/v1/images/global/$quarterlyId/cover.png")}";
-
-    return Stack(
-      children: [
-        SizedBox(
-          height: 350,
-          width: double.infinity,
-          child: Image.network(proxiedUrl, fit: BoxFit.cover),
-        ),
-        Container(
-          height: 350,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withOpacity(0.6),
-                Colors.transparent,
-                Colors.white,
-              ],
-              stops: const [0.0, 0.4, 1.0],
-            ),
-          ),
-        ),
-        Positioned(
-          bottom: 20,
-          left: 20,
-          right: 20,
-          child: Text(
-            content.title ?? "",
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _navigateToDay(BuildContext context, LessonDay day) {
-    final segments = lessonIndex.split('/');
-    segments.removeLast();
-    segments.add(day.index!);
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ReaderScreen(
-          lessonIndex: segments.join('/'),
-          lessonTitle: lessonTitle,
         ),
       ),
     );
