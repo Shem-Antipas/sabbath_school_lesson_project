@@ -20,21 +20,18 @@ class ReaderScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final asyncContent = ref.watch(lessonContentProvider(lessonIndex));
-    // Check if the screen is wide enough for a permanent sidebar
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
     return asyncContent.when(
       data: (LessonContent content) {
         return Scaffold(
           extendBodyBehindAppBar: true,
-          // 1. MOBILE DRAWER: Visible only on smaller screens
           drawer: !isDesktop
               ? _buildNavigationMenu(context, content, isDrawer: true)
               : null,
           appBar: AppBar(
             backgroundColor: Colors.transparent,
             elevation: 0,
-            // 2. DYNAMIC LEADING: Hamburger menu for mobile, Back button for desktop
             leading: isDesktop
                 ? const BackButton(color: Colors.white)
                 : Builder(
@@ -57,11 +54,8 @@ class ReaderScreen extends ConsumerWidget {
           bottomNavigationBar: _buildBottomNavigation(context, content),
           body: Row(
             children: [
-              // 3. DESKTOP SIDEBAR: Visible only on wide screens
               if (isDesktop)
                 _buildNavigationMenu(context, content, isDrawer: false),
-
-              // 4. MAIN READER AREA
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
@@ -89,7 +83,6 @@ class ReaderScreen extends ConsumerWidget {
                                   fontSize: 19,
                                   height: 1.6,
                                 ),
-                                // Blue Underlined Links
                                 customStylesBuilder: (element) {
                                   if (element.localName == 'a') {
                                     return {
@@ -100,7 +93,6 @@ class ReaderScreen extends ConsumerWidget {
                                   }
                                   return null;
                                 },
-                                // Link Handling
                                 onTapUrl: (url) {
                                   if (url.startsWith(
                                     'sabbath-school://bible',
@@ -129,14 +121,16 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  // --- NAVIGATION MENU (Drawer or Sidebar) ---
+  // --- UPDATED: CHRONOLOGICAL NAVIGATION MENU ---
   Widget _buildNavigationMenu(
     BuildContext context,
     LessonContent content, {
     required bool isDrawer,
   }) {
+    final days = content.days ?? [];
+
     return Container(
-      width: 280,
+      width: 300,
       height: double.infinity,
       decoration: BoxDecoration(
         color: isDrawer ? Colors.white : Colors.grey[50],
@@ -155,42 +149,41 @@ class ReaderScreen extends ConsumerWidget {
               bottom: 20,
             ),
             color: isDrawer ? Colors.blueGrey[900] : Colors.transparent,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  lessonTitle,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: isDrawer ? Colors.white : Colors.blueGrey[800],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "Read Lessons",
-                  style: TextStyle(
-                    color: isDrawer ? Colors.white70 : Colors.blueGrey[400],
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+            child: Text(
+              lessonTitle,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: isDrawer ? Colors.white : Colors.blueGrey[800],
+              ),
             ),
           ),
           const Divider(height: 1),
           Expanded(
             child: ListView.builder(
               padding: EdgeInsets.zero,
-              itemCount: content.days?.length ?? 0,
+              itemCount: days.length,
               itemBuilder: (context, index) {
-                final day = content.days![index];
+                final day = days[index];
                 final bool isCurrent = lessonIndex.endsWith(day.index ?? "");
 
                 return ListTile(
                   selected: isCurrent,
-                  selectedTileColor: Colors.blue.withOpacity(0.05),
+                  selectedTileColor: Colors.blue.withOpacity(0.1),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 4,
+                  ),
+                  // Displays "1", "2", etc. next to the title
+                  leading: Text(
+                    "${index + 1}",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isCurrent ? Colors.blue[800] : Colors.grey,
+                    ),
+                  ),
                   title: Text(
-                    day.title ?? "",
+                    day.title ?? "Lesson Day",
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: isCurrent
@@ -199,6 +192,9 @@ class ReaderScreen extends ConsumerWidget {
                       color: isCurrent ? Colors.blue[800] : Colors.black87,
                     ),
                   ),
+                  subtitle: day.date != null
+                      ? Text(day.date!, style: const TextStyle(fontSize: 12))
+                      : null,
                   onTap: () {
                     if (isDrawer) Navigator.pop(context);
                     _navigateToDay(context, day);
@@ -212,7 +208,69 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  // --- BIBLE FETCH LOGIC ---
+  // --- UPDATED: BOTTOM NAV WITH COLORED BUTTONS ---
+  Widget _buildBottomNavigation(BuildContext context, LessonContent content) {
+    final currentDayIndex =
+        content.days?.indexWhere(
+          (day) => lessonIndex.endsWith(day.index ?? ""),
+        ) ??
+        -1;
+    final hasPrev = currentDayIndex > 0;
+    final hasNext =
+        content.days != null && currentDayIndex < content.days!.length - 1;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            if (hasPrev)
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange[900],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () => _navigateToDay(
+                    context,
+                    content.days![currentDayIndex - 1],
+                  ),
+                  child: const Text("PREVIOUS"),
+                ),
+              ),
+            if (hasPrev && hasNext) const SizedBox(width: 15),
+            if (hasNext)
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[800],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () => _navigateToDay(
+                    context,
+                    content.days![currentDayIndex + 1],
+                  ),
+                  child: const Text("NEXT"),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // (Keeping _fetchBibleText, _showBibleVerse, _buildHeaderImage, and _navigateToDay as per your requirement)
+
   Future<String> _fetchBibleText(String verse) async {
     final cleanVerse = Uri.encodeComponent(verse.replaceAll('+', ' '));
     final url = Uri.parse('https://bible-api.com/$cleanVerse');
@@ -249,8 +307,9 @@ class ReaderScreen extends ConsumerWidget {
               child: FutureBuilder<String>(
                 future: _fetchBibleText(verse),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting)
+                  if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
+                  }
                   return SingleChildScrollView(
                     child: Text(
                       snapshot.data ?? "No text available.",
@@ -266,7 +325,6 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  // --- IMAGE & NAVIGATION LOGIC ---
   Widget _buildHeaderImage(BuildContext context, LessonContent content) {
     final parts = lessonIndex.split('/');
     final quarterlyId = parts.length > 1 ? parts[1] : "";
@@ -309,49 +367,6 @@ class ReaderScreen extends ConsumerWidget {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildBottomNavigation(BuildContext context, LessonContent content) {
-    final currentDayIndex =
-        content.days?.indexWhere(
-          (day) => lessonIndex.endsWith(day.index ?? ""),
-        ) ??
-        -1;
-    final hasPrev = currentDayIndex > 0;
-    final hasNext =
-        content.days != null && currentDayIndex < content.days!.length - 1;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-      color: Colors.white,
-      child: SafeArea(
-        child: Row(
-          children: [
-            if (hasPrev)
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => _navigateToDay(
-                    context,
-                    content.days![currentDayIndex - 1],
-                  ),
-                  child: const Text("PREVIOUS"),
-                ),
-              ),
-            if (hasPrev && hasNext) const SizedBox(width: 15),
-            if (hasNext)
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => _navigateToDay(
-                    context,
-                    content.days![currentDayIndex + 1],
-                  ),
-                  child: const Text("NEXT"),
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 
