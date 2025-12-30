@@ -33,6 +33,31 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <div id="loading-indicator">
+    <style>
+      /* This ensures the splash covers the whole screen initially */
+      #loading-indicator {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #0e034b; /* Your splash blue color */
+        z-index: 9999;
+      }
+    </style>
+    <img src="icons/Icon-192.png" alt="Loading..." style="width: 100px; height: 100px;">
+  </div>
+
+  <script>
+    // 2. This listener detects when Flutter has finished drawing the first frame
+    window.addEventListener('flutter-first-frame', function () {
+      var loader = document.getElementById('loading-indicator');
+      if (loader) {
+        loader.remove(); // This physically removes the blue layer from the DOM
+      }
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

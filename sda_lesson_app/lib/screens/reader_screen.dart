@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:share_plus/share_plus.dart';
-import '../providers/data_providers.dart';
-import '../data/models/lesson_content.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:sda_lesson_app/providers/data_providers.dart';
+import 'package:sda_lesson_app/models/lesson_content.dart' as reader;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io'; // This defines 'File'
+import 'dart:convert'; // This defines 'jsonEncode'
 
 class ReaderScreen extends ConsumerWidget {
   final String lessonIndex;
@@ -19,31 +20,60 @@ class ReaderScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncContent = ref.watch(lessonContentProvider(lessonIndex));
+    // 1. Get the "Parent" path (e.g., transform '.../01/01' into '.../01')
+    final List<String> pathSegments = lessonIndex.split('/');
+    final String parentIndex = pathSegments.length > 3
+        ? pathSegments.sublist(0, 3).join('/')
+        : lessonIndex;
+
+    // 2. Watch the PARENT index to get the 'days' list for the menu
+    final asyncContent = ref.watch(lessonContentProvider(parentIndex));
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
     return asyncContent.when(
-      data: (LessonContent? content) {
-        // Guard 1: Null Content Check
-        if (content == null) {
-          return const Scaffold(
-            body: Center(child: Text("No study material found for this day.")),
-          );
+      data: (rawData) {
+        final reader.LessonContent content = rawData;
+
+        // Now 'daysList' will contain all 7 days because we loaded the parent index
+        final List<reader.Day> daysList = content.days ?? [];
+
+        if (daysList.isEmpty) {
+          return const Scaffold(body: Center(child: Text("No days found.")));
         }
+
+        // Find which day we are actually looking at from the original lessonIndex
+        final String currentDayId = lessonIndex.split('/').last;
+        final int activeDayIndex = daysList.indexWhere(
+          (d) => d.id == currentDayId || d.index == currentDayId,
+        );
+
+        final int safeIndex = activeDayIndex != -1 ? activeDayIndex : 0;
+        final reader.Day activeDay = daysList[safeIndex];
+
+        // FIX: Use null-aware operator ?. to access cover
+        final String? coverImage = content.lesson?.cover;
 
         return Scaffold(
           extendBodyBehindAppBar: true,
           drawer: !isDesktop
-              ? _buildNavigationMenu(context, content, isDrawer: true)
+              ? _buildNavigationMenu(
+                  context,
+                  daysList,
+                  safeIndex,
+                  isDrawer: true,
+                )
               : null,
           appBar: AppBar(
             backgroundColor: Colors.transparent,
             elevation: 0,
             leading: isDesktop
-                ? const BackButton(color: Colors.white)
+                ? const BackButton(color: Color.fromARGB(255, 8, 8, 8))
                 : Builder(
                     builder: (context) => IconButton(
-                      icon: const Icon(Icons.menu, color: Colors.white),
+                      icon: const Icon(
+                        Icons.menu,
+                        color: Color.fromARGB(255, 0, 0, 0),
+                      ),
                       onPressed: () => Scaffold.of(context).openDrawer(),
                     ),
                   ),
@@ -51,180 +81,244 @@ class ReaderScreen extends ConsumerWidget {
               IconButton(
                 icon: const Icon(Icons.share, color: Colors.white),
                 onPressed: () {
-                  final plainText =
-                      content.content?.replaceAll(RegExp(r'<[^>]*>'), '') ?? "";
-                  Share.share('${content.title ?? lessonTitle}\n\n$plainText');
+                  final String title = activeDay.title;
+                  final String htmlContent = activeDay.content;
+                  final String plainText = htmlContent.replaceAll(
+                    RegExp(r'<[^>]*>'),
+                    '',
+                  );
+                  Share.share('$title\n\n$plainText');
+                },
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.download_for_offline_outlined,
+                  color: Colors.white,
+                ),
+                onPressed: () => _handleDownload(context, ref),
+              ),
+              IconButton(
+                icon: const Icon(Icons.share, color: Colors.white),
+                onPressed: () {
+                  /* Your existing share logic */
                 },
               ),
             ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(
+                4.0,
+              ), // Height of the progress bar
+              child: LinearProgressIndicator(
+                // (activeIndex + 1) / totalDays gives us the percentage
+                value: (safeIndex + 1) / daysList.length,
+                backgroundColor: Colors.white.withOpacity(0.2),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                minHeight: 4,
+              ),
+            ),
           ),
-          bottomNavigationBar: _buildBottomNavigation(context, content),
+          bottomNavigationBar: _buildBottomNavigation(
+            context,
+            daysList,
+            safeIndex,
+          ),
           body: Row(
             children: [
               if (isDesktop)
-                _buildNavigationMenu(context, content, isDrawer: false),
+                _buildNavigationMenu(
+                  context,
+                  daysList,
+                  safeIndex,
+                  isDrawer: false,
+                ),
               Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      _buildHeaderImage(context, content),
-                      Center(
-                        child: Container(
-                          constraints: const BoxConstraints(maxWidth: 800),
-                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                content.date?.toUpperCase() ??
-                                    "DATE NOT AVAILABLE",
-                                style: TextStyle(
-                                  color: Colors.blueGrey[400],
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                              const SizedBox(height: 15),
-                              // Guard 2: HTML Content Fallback
-                              HtmlWidget(
-                                content.content ??
-                                    "<h3>Content coming soon.</h3>",
-                                textStyle: const TextStyle(
-                                  fontSize: 19,
-                                  height: 1.6,
-                                ),
-                                customStylesBuilder: (element) {
-                                  if (element.localName == 'a') {
-                                    return {
-                                      'color': '#1565C0',
-                                      'text-decoration': 'underline',
-                                      'font-weight': '600',
-                                    };
-                                  }
-                                  return null;
-                                },
-                                onTapUrl: (url) {
-                                  if (url.startsWith(
-                                    'sabbath-school://bible',
-                                  )) {
-                                    _showBibleVerse(context, url);
-                                    return true;
-                                  }
-                                  return false;
-                                },
-                              ),
-                            ],
+                child: FutureBuilder<reader.LessonContent>(
+                  // We fetch the SPECIFIC day content using the full lessonIndex (e.g., .../01/01)
+                  future: ref.read(apiProvider).fetchLessonContent(lessonIndex),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    // Use the specific day data if it exists, otherwise fall back to menu data
+                    final displayData = snapshot.data;
+                    final String studyContent =
+                        displayData?.content ?? activeDay.content;
+                    final String studyTitle =
+                        displayData?.title ?? activeDay.title;
+                    final String studyDate =
+                        displayData?.date ?? activeDay.date;
+
+                    return SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          _buildHeaderImage(
+                            content.lesson?.title ?? studyTitle,
+                            coverImage,
                           ),
-                        ),
+                          Center(
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 800),
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                20,
+                                20,
+                                100,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    studyDate.toUpperCase(),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blueGrey,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 15),
+                                  HtmlWidget(
+                                    studyContent.isEmpty
+                                        ? "No content available."
+                                        : studyContent,
+                                    textStyle: const TextStyle(
+                                      fontSize:
+                                          20, // Slightly larger for better readability
+                                      height: 1.6, // Comfortable line spacing
+                                      fontFamily:
+                                          'Georgia', // Or your custom serif font
+                                      color: Color(
+                                        0xFF2C3E50,
+                                      ), // Darker grey, easier on the eyes than pure black
+                                    ),
+                                    // Style specific HTML tags like <a> (Bible links)
+                                    customStylesBuilder: (element) {
+                                      if (element.localName == 'a') {
+                                        return {
+                                          'color':
+                                              '#1A73E8', // Nice "Google Blue" for links
+                                          'text-decoration': 'none',
+                                          'font-weight': 'bold',
+                                        };
+                                      }
+                                      return null;
+                                    },
+                                    onTapUrl: (url) {
+                                      if (url.startsWith(
+                                        'sabbath-school://bible',
+                                      )) {
+                                        _showBibleVerse(
+                                          context,
+                                          url,
+                                          activeDay,
+                                        );
+                                        return true;
+                                      }
+                                      return false;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
           ),
         );
       },
-      // Guard 3: Explicit Loading State
-      loading: () => const Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(child: CircularProgressIndicator()),
-      ),
-      // Guard 4: Detailed Error State
-      error: (err, stack) => Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Text(
-              "Something went wrong:\n$err",
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-        ),
-      ),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error: (err, stack) => Scaffold(body: Center(child: Text("Error: $err"))),
     );
   }
 
   Widget _buildNavigationMenu(
     BuildContext context,
-    LessonContent content, {
+    List<reader.Day> daysList,
+    int activeIndex, {
     required bool isDrawer,
   }) {
-    // Guard 5: Safe mapping of days
-    final List<LessonDay> days = content.days ?? [];
-
     return Container(
       width: 300,
-      height: double.infinity,
-      decoration: BoxDecoration(
-        color: isDrawer ? Colors.white : Colors.grey[50],
-        border: isDrawer
-            ? null
-            : Border(right: BorderSide(color: Colors.grey[200]!)),
-      ),
+      // Ensure the background is solid white for the drawer
+      color: isDrawer ? Colors.white : Colors.grey[50],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 20,
-              left: 20,
-              right: 20,
-              bottom: 20,
+          // 1. NAVIGATION HEADER (Visible on Mobile/Drawer)
+          if (isDrawer)
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8.0, top: 10.0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      // Changed to black for visibility on white background
+                      icon: const Icon(Icons.arrow_back, color: Colors.black87),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const Text(
+                      "Back",
+                      style: TextStyle(
+                        color: Colors.black87,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            width: double.infinity,
-            color: isDrawer ? Colors.blueGrey[900] : Colors.transparent,
+
+          // 2. LESSON TITLE SECTION
+          Container(
+            padding: EdgeInsets.fromLTRB(20, isDrawer ? 10 : 40, 20, 20),
             child: Text(
               lessonTitle,
-              style: TextStyle(
+              style: const TextStyle(
                 fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: isDrawer ? Colors.white : Colors.blueGrey[800],
+                fontSize: 18,
+                color: Colors.black87, // High contrast text
               ),
             ),
           ),
-          const Divider(height: 1),
+
+          const Divider(height: 1), // Subtle separator
+          // 3. DAYS LIST
           Expanded(
             child: ListView.builder(
               padding: EdgeInsets.zero,
-              itemCount: days.length,
+              itemCount: daysList.length,
               itemBuilder: (context, index) {
-                final day = days[index];
-                // Guard 6: Null index comparison
-                final bool isCurrent =
-                    day.index != null && lessonIndex.endsWith(day.index!);
+                final reader.Day day = daysList[index];
+                final bool isSelected = index == activeIndex;
 
                 return ListTile(
-                  selected: isCurrent,
+                  selected: isSelected,
                   selectedTileColor: Colors.blue.withOpacity(0.1),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 4,
-                  ),
-                  leading: Text(
-                    "${index + 1}",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: isCurrent ? Colors.blue[800] : Colors.grey,
-                    ),
+                  leading: Icon(
+                    Icons.calendar_today_outlined,
+                    size: 18,
+                    color: isSelected ? Colors.blue : Colors.grey,
                   ),
                   title: Text(
-                    day.title ?? "Day ${index + 1}",
+                    day.title,
                     style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isCurrent
+                      fontWeight: isSelected
                           ? FontWeight.bold
                           : FontWeight.normal,
-                      color: isCurrent ? Colors.blue[800] : Colors.black87,
+                      color: isSelected ? Colors.blue : Colors.black87,
                     ),
                   ),
-                  subtitle: day.date != null
-                      ? Text(day.date!, style: const TextStyle(fontSize: 12))
-                      : null,
+                  subtitle: Text(day.date),
                   onTap: () {
                     if (isDrawer) Navigator.pop(context);
-                    if (day.index != null) _navigateToDay(context, day);
+                    _navigateToDay(context, daysList, index);
                   },
                 );
               },
@@ -235,193 +329,268 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildBottomNavigation(BuildContext context, LessonContent content) {
-    final days = content.days ?? [];
-    final currentDayIndex = days.indexWhere(
-      (day) => day.index != null && lessonIndex.endsWith(day.index!),
-    );
+  Widget _buildBottomNavigation(
+    BuildContext context,
+    List<reader.Day> daysList,
+    int activeIndex,
+  ) {
+    final hasPrev = activeIndex > 0;
+    final hasNext = activeIndex < daysList.length - 1;
 
-    final hasPrev = currentDayIndex > 0;
-    final hasNext = currentDayIndex != -1 && currentDayIndex < days.length - 1;
+    // Calculate current day for display (e.g., Day 1 of 7)
+    final int currentDayNumber = activeIndex + 1;
+    final int totalDays = daysList.length;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -5),
+          ),
+        ],
       ),
       child: SafeArea(
-        child: Row(
-          children: [
-            if (hasPrev)
-              Expanded(
-                child: ElevatedButton(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // PREVIOUS BUTTON - ORANGE
+              if (hasPrev)
+                ElevatedButton(
+                  onPressed: () =>
+                      _navigateToDay(context, daysList, activeIndex - 1),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange[900],
+                    backgroundColor: Colors.orange[700],
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () =>
-                      _navigateToDay(context, days[currentDayIndex - 1]),
-                  child: const Text("PREVIOUS"),
-                ),
+                  child: const Icon(Icons.arrow_back_ios, size: 18),
+                )
+              else
+                const SizedBox(
+                  width: 48,
+                ), // Match button width to keep center label aligned
+              // DAY PROGRESS LABEL
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "DAY $currentDayNumber",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: Colors.blueGrey,
+                    ),
+                  ),
+                  Text(
+                    "of $totalDays",
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                ],
               ),
-            if (hasPrev && hasNext) const SizedBox(width: 15),
-            if (hasNext)
-              Expanded(
-                child: ElevatedButton(
+
+              // NEXT BUTTON - BLUE
+              if (hasNext)
+                ElevatedButton(
+                  onPressed: () =>
+                      _navigateToDay(context, daysList, activeIndex + 1),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[800],
+                    backgroundColor: Colors.blue[700],
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () =>
-                      _navigateToDay(context, days[currentDayIndex + 1]),
-                  child: const Text("NEXT"),
+                  child: const Icon(Icons.arrow_forward_ios, size: 18),
+                )
+              else
+                const SizedBox(width: 48),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderImage(String title, String? imageUrl) {
+    return Container(
+      height: 300,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.blueGrey[900],
+        image: (imageUrl != null && imageUrl.isNotEmpty)
+            ? DecorationImage(
+                image: NetworkImage(imageUrl),
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(
+                  Colors.black.withOpacity(0.3),
+                  BlendMode.darken,
                 ),
-              ),
+              )
+            : null,
+      ),
+      alignment: Alignment.bottomLeft,
+      padding: const EdgeInsets.all(20),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 24,
+          fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(offset: Offset(0, 2), blurRadius: 4, color: Colors.black),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHeaderImage(BuildContext context, LessonContent content) {
-    final parts = lessonIndex.split('/');
-    final quarterlyId = parts.length > 1 ? parts[1] : "quarterly";
-    final String proxiedUrl =
-        "http://127.0.0.1:8787/proxy-image?url=${Uri.encodeComponent("https://sabbath-school.adventech.io/api/v1/images/global/$quarterlyId/cover.png")}";
-
-    return Stack(
-      children: [
-        Container(
-          height: 350,
-          width: double.infinity,
-          color: Colors.blueGrey[900], // Background color while loading
-          child: Image.network(
-            proxiedUrl,
-            fit: BoxFit.cover,
-            // Guard 7: Image Error Handling
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: Colors.blueGrey[800],
-              child: const Icon(
-                Icons.image_not_supported,
-                color: Colors.white30,
-                size: 50,
-              ),
-            ),
-          ),
-        ),
-        Container(
-          height: 350,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withOpacity(0.6),
-                Colors.transparent,
-                Colors.white,
-              ],
-              stops: const [0.0, 0.4, 1.0],
-            ),
-          ),
-        ),
-        Positioned(
-          bottom: 20,
-          left: 20,
-          right: 20,
-          child: Text(
-            content.title ?? "",
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _navigateToDay(BuildContext context, LessonDay day) {
-    if (day.index == null) return;
-
-    final segments = lessonIndex.split('/');
-    if (segments.length < 2) return; // Prevent crash on malformed index
-
+  void _navigateToDay(
+    BuildContext context,
+    List<reader.Day> daysList,
+    int targetIndex,
+  ) {
+    final reader.Day targetDay = daysList[targetIndex];
+    final List<String> segments = lessonIndex.split('/');
     segments.removeLast();
-    segments.add(day.index!);
+    segments.add(targetDay.id);
 
     Navigator.pushReplacement(
       context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation1, animation2) => ReaderScreen(
+      MaterialPageRoute(
+        builder: (context) => ReaderScreen(
           lessonIndex: segments.join('/'),
           lessonTitle: lessonTitle,
         ),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
       ),
     );
   }
 
-  // --- Bible Verse Methods ---
-  Future<String> _fetchBibleText(String verse) async {
-    final cleanVerse = Uri.encodeComponent(verse.replaceAll('+', ' '));
-    final url = Uri.parse('https://bible-api.com/$cleanVerse');
-    try {
-      final response = await http.get(url);
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        return data['text'] ?? "Text not found.";
-      }
-      return "Could not load verse.";
-    } catch (e) {
-      return "Network error.";
-    }
-  }
-
-  void _showBibleVerse(BuildContext context, String url) {
-    final verse = Uri.parse(url).queryParameters['verse'] ?? "Verse not found";
+  void _showBibleVerse(BuildContext context, String url, reader.Day activeDay) {
+    final uri = Uri.parse(url);
+    // Get reference (e.g., "John 3:16")
+    final String verseReference = uri.queryParameters['verse'] ?? "Verse";
+    final verseData = activeDay.bible?.firstWhere(
+      (v) => v.name.replaceAll(' ', '') == verseReference.replaceAll(' ', ''),
+      orElse: () => reader.BibleVerse(
+        name: verseReference,
+        content: "Verse text not available.",
+      ),
+    );
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true, // Allows the sheet to expand for long verses
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              verse.replaceAll('+', ' '),
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            // A small handle at the top for better UI
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  verseData?.name ?? verseReference,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blueGrey,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
             ),
             const Divider(),
-            Expanded(
-              child: FutureBuilder<String>(
-                future: _fetchBibleText(verse),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return SingleChildScrollView(
-                    child: Text(
-                      snapshot.data ?? "No text available.",
-                      style: const TextStyle(fontSize: 18),
-                    ),
-                  );
-                },
+            const SizedBox(height: 10),
+            // 3. Use HtmlWidget here because verse content often contains <b> or <i> tags
+            Flexible(
+              child: SingleChildScrollView(
+                child: HtmlWidget(
+                  verseData?.content ?? "Content not found.",
+                  textStyle: const TextStyle(
+                    fontSize: 18,
+                    fontStyle: FontStyle.italic,
+                    height: 1.5,
+                    color: Colors.black87,
+                  ),
+                ),
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _handleDownload(BuildContext context, WidgetRef ref) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Downloading lesson for offline use..."),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      // 1. Fetch the data
+      final content = await ref
+          .read(apiProvider)
+          .fetchLessonContent(lessonIndex);
+
+      // 2. Get directory
+      final directory = await getApplicationDocumentsDirectory();
+      final fileName = "${lessonIndex.replaceAll('/', '_')}.json";
+      final file = File('${directory.path}/$fileName');
+
+      // 3. Save the file (requires the toJson changes in your model file)
+      final String jsonString = jsonEncode(content.toJson());
+      await file.writeAsString(jsonString);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Success! This lesson is now available offline."),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Download failed: ${e.toString()}"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }

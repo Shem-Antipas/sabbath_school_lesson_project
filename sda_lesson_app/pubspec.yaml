@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.4.9
+  path_provider: ^2.1.0
   dio: ^5.4.0
   json_annotation: ^4.8.1
   cached_network_image: ^3.3.0
@@ -17,6 +18,11 @@ dependencies:
   flutter_widget_from_html: ^0.15.1
   share_plus: ^7.2.2
   http: ^1.1.0
+  audioplayers: ^5.2.1
+  html: ^0.15.4 # To parse Bible HTML into clean verses
+  flutter_tts: ^3.8.3 # For reading aloud
+  shared_preferences: ^2.2.0 # For storing user settings
+
   # You can remove flutter_markdown as it isn't needed for this API
 
 dev_dependencies:
@@ -28,3 +34,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # - assets/hymnals/
+    - assets/hymns.json
