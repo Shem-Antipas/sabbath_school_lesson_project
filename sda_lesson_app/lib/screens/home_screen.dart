@@ -18,11 +18,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final asyncQuarterlies = ref.watch(quarterlyListProvider);
 
+    // 1. THEME DETECTION
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 2. DYNAMIC COLORS
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final appBarColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final titleColor = isDark ? Colors.white : Colors.black87;
+    final subtitleColor = isDark ? Colors.grey[400] : Colors.grey[600];
+    final shadowColor = isDark
+        ? Colors.black.withOpacity(0.5)
+        : Colors.black.withOpacity(0.1);
+    final hoverShadowColor = isDark
+        ? Colors.black.withOpacity(0.8)
+        : Colors.black.withOpacity(0.2);
+
     return Scaffold(
+      backgroundColor: backgroundColor, // Dynamic Background
       appBar: AppBar(
-        title: const Text("Sabbath School"),
+        title: Text(
+          "Sabbath School",
+          style: TextStyle(color: titleColor), // Dynamic Title
+        ),
         centerTitle: true,
         elevation: 0,
+        backgroundColor: appBarColor, // Dynamic AppBar
+        iconTheme: IconThemeData(color: titleColor), // Back arrow color
       ),
       body: Center(
         child: Container(
@@ -32,7 +53,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             data: (quarterlies) {
               return GridView.builder(
                 padding: const EdgeInsets.symmetric(vertical: 30),
-                // DYNAMIC COLUMNS: maxCrossAxisExtent ensures responsiveness
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 300,
                   crossAxisSpacing: 25,
@@ -44,8 +64,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   final item = quarterlies[index];
                   final isHovered = hoveredIndex == index;
 
-                  final String proxiedImageUrl =
-                      "http://127.0.0.1:8787/proxy-image?url=${Uri.encodeComponent(item.coverUrl)}";
+                  final String imageUrl = item.fullCoverUrl;
 
                   return MouseRegion(
                     onEnter: (_) => setState(() => hoveredIndex = index),
@@ -66,7 +85,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeInOut,
-                        // Scales up by 3% when hovered
                         transform: isHovered
                             ? (Matrix4.identity()..scale(1.03))
                             : Matrix4.identity(),
@@ -81,8 +99,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   boxShadow: [
                                     BoxShadow(
                                       color: isHovered
-                                          ? Colors.black.withOpacity(0.2)
-                                          : Colors.black.withOpacity(0.1),
+                                          ? hoverShadowColor
+                                          : shadowColor, // Dynamic Shadow
                                       blurRadius: isHovered ? 20 : 10,
                                       offset: const Offset(0, 8),
                                     ),
@@ -91,21 +109,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
                                   child: CachedNetworkImage(
-                                    imageUrl: proxiedImageUrl,
+                                    imageUrl: imageUrl,
                                     fit: BoxFit.cover,
                                     width: double.infinity,
                                     placeholder: (context, url) => Container(
-                                      color: Colors.grey[200],
+                                      color: isDark
+                                          ? Colors.grey[800]
+                                          : Colors.grey[200],
                                       child: const Center(
                                         child: CircularProgressIndicator(),
                                       ),
                                     ),
                                     errorWidget: (context, url, error) =>
                                         Container(
-                                          color: Colors.grey[300],
-                                          child: const Icon(
-                                            Icons.book,
+                                          color: isDark
+                                              ? Colors.grey[800]
+                                              : Colors.grey[300],
+                                          child: Icon(
+                                            Icons.broken_image,
                                             size: 40,
+                                            color: isDark
+                                                ? Colors.grey[600]
+                                                : Colors.grey,
                                           ),
                                         ),
                                   ),
@@ -124,7 +149,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   fontSize: 17,
                                   color: isHovered
                                       ? Colors.blueAccent
-                                      : Colors.black87,
+                                      : titleColor, // Dynamic Title Color
                                   height: 1.2,
                                 ),
                               ),
@@ -134,7 +159,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               child: Text(
                                 item.humanDate,
                                 style: TextStyle(
-                                  color: Colors.grey[600],
+                                  color: subtitleColor, // Dynamic Date Color
                                   fontSize: 13,
                                 ),
                               ),
@@ -147,7 +172,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 },
               );
             },
-            error: (err, stack) => Center(child: Text('Error: $err')),
+            error: (err, stack) => Center(
+              child: Text('Error: $err', style: TextStyle(color: titleColor)),
+            ),
             loading: () => const Center(child: CircularProgressIndicator()),
           ),
         ),

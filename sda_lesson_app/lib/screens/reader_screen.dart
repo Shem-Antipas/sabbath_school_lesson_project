@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:sda_lesson_app/providers/data_providers.dart';
 import 'package:sda_lesson_app/models/lesson_content.dart' as reader;
 import 'package:path_provider/path_provider.dart';
-import 'dart:io'; // This defines 'File'
-import 'dart:convert'; // This defines 'jsonEncode'
+import 'dart:io';
+import 'dart:convert';
 
 class ReaderScreen extends ConsumerWidget {
   final String lessonIndex;
@@ -20,28 +21,40 @@ class ReaderScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 1. Get the "Parent" path (e.g., transform '.../01/01' into '.../01')
+    // 1. THEME DETECTION
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    // HTML Text: Dark Grey for Light Mode, Light Grey for Dark Mode
+    final htmlTextColor = isDark
+        ? const Color(0xFFE0E0E0)
+        : const Color(0xFF2C3E50);
+
+    // Get the "Parent" path
     final List<String> pathSegments = lessonIndex.split('/');
     final String parentIndex = pathSegments.length > 3
         ? pathSegments.sublist(0, 3).join('/')
         : lessonIndex;
 
-    // 2. Watch the PARENT index to get the 'days' list for the menu
     final asyncContent = ref.watch(lessonContentProvider(parentIndex));
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
     return asyncContent.when(
       data: (rawData) {
         final reader.LessonContent content = rawData;
-
-        // Now 'daysList' will contain all 7 days because we loaded the parent index
         final List<reader.Day> daysList = content.days ?? [];
 
         if (daysList.isEmpty) {
-          return const Scaffold(body: Center(child: Text("No days found.")));
+          return Scaffold(
+            backgroundColor: backgroundColor,
+            body: Center(
+              child: Text(
+                "No days found.",
+                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+              ),
+            ),
+          );
         }
 
-        // Find which day we are actually looking at from the original lessonIndex
         final String currentDayId = lessonIndex.split('/').last;
         final int activeDayIndex = daysList.indexWhere(
           (d) => d.id == currentDayId || d.index == currentDayId,
@@ -50,10 +63,15 @@ class ReaderScreen extends ConsumerWidget {
         final int safeIndex = activeDayIndex != -1 ? activeDayIndex : 0;
         final reader.Day activeDay = daysList[safeIndex];
 
-        // FIX: Use null-aware operator ?. to access cover
-        final String? coverImage = content.lesson?.cover;
+        // IMAGE URL LOGIC
+        String? coverImage = content.lesson?.cover;
+        if (coverImage != null && !coverImage.startsWith('http')) {
+          coverImage =
+              "https://sabbath-school.adventech.io/api/v1/$parentIndex/cover.png";
+        }
 
         return Scaffold(
+          backgroundColor: backgroundColor,
           extendBodyBehindAppBar: true,
           drawer: !isDesktop
               ? _buildNavigationMenu(
@@ -61,19 +79,18 @@ class ReaderScreen extends ConsumerWidget {
                   daysList,
                   safeIndex,
                   isDrawer: true,
+                  isDark: isDark,
                 )
               : null,
           appBar: AppBar(
             backgroundColor: Colors.transparent,
             elevation: 0,
+            iconTheme: const IconThemeData(color: Colors.white),
             leading: isDesktop
-                ? const BackButton(color: Color.fromARGB(255, 8, 8, 8))
+                ? const BackButton(color: Colors.white)
                 : Builder(
                     builder: (context) => IconButton(
-                      icon: const Icon(
-                        Icons.menu,
-                        color: Color.fromARGB(255, 0, 0, 0),
-                      ),
+                      icon: const Icon(Icons.menu, color: Colors.white),
                       onPressed: () => Scaffold.of(context).openDrawer(),
                     ),
                   ),
@@ -97,19 +114,10 @@ class ReaderScreen extends ConsumerWidget {
                 ),
                 onPressed: () => _handleDownload(context, ref),
               ),
-              IconButton(
-                icon: const Icon(Icons.share, color: Colors.white),
-                onPressed: () {
-                  /* Your existing share logic */
-                },
-              ),
             ],
             bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(
-                4.0,
-              ), // Height of the progress bar
+              preferredSize: const Size.fromHeight(4.0),
               child: LinearProgressIndicator(
-                // (activeIndex + 1) / totalDays gives us the percentage
                 value: (safeIndex + 1) / daysList.length,
                 backgroundColor: Colors.white.withOpacity(0.2),
                 valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
@@ -121,6 +129,7 @@ class ReaderScreen extends ConsumerWidget {
             context,
             daysList,
             safeIndex,
+            isDark,
           ),
           body: Row(
             children: [
@@ -130,17 +139,16 @@ class ReaderScreen extends ConsumerWidget {
                   daysList,
                   safeIndex,
                   isDrawer: false,
+                  isDark: isDark,
                 ),
               Expanded(
                 child: FutureBuilder<reader.LessonContent>(
-                  // We fetch the SPECIFIC day content using the full lessonIndex (e.g., .../01/01)
                   future: ref.read(apiProvider).fetchLessonContent(lessonIndex),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    // Use the specific day data if it exists, otherwise fall back to menu data
                     final displayData = snapshot.data;
                     final String studyContent =
                         displayData?.content ?? activeDay.content;
@@ -168,53 +176,79 @@ class ReaderScreen extends ConsumerWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    studyDate.toUpperCase(),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.blueGrey,
+                                  // --- 1. WRAP CONTENT IN SELECTIONAREA ---
+                                  SelectionArea(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          studyDate.toUpperCase(),
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: isDark
+                                                ? Colors.grey[400]
+                                                : Colors.blueGrey,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 15),
+
+                                        // --- UPDATED HTML WIDGET ---
+                                        HtmlWidget(
+                                          studyContent.isEmpty
+                                              ? "No content available."
+                                              : studyContent,
+                                          textStyle: TextStyle(
+                                            fontSize: 20,
+                                            height: 1.6,
+                                            fontFamily: 'Georgia',
+                                            color: htmlTextColor,
+                                          ),
+                                          customStylesBuilder: (element) {
+                                            if (element.localName == 'a') {
+                                              return {
+                                                'color': isDark
+                                                    ? '#64B5F6'
+                                                    : '#1A73E8',
+                                                'text-decoration': 'none',
+                                                'font-weight': 'bold',
+                                                'border-bottom':
+                                                    '1px dotted ${isDark ? '#64B5F6' : '#1A73E8'}',
+                                              };
+                                            }
+                                            return null;
+                                          },
+                                          onTapUrl: (url) async {
+                                            // 1. Handle Internal Bible Links
+                                            if (url.startsWith(
+                                              'sabbath-school://bible',
+                                            )) {
+                                              _showBibleVerse(
+                                                context,
+                                                url,
+                                                activeDay,
+                                                isDark,
+                                              );
+                                              return true;
+                                            }
+
+                                            // 2. Handle External Web Links
+                                            final uri = Uri.tryParse(url);
+                                            if (uri != null &&
+                                                await canLaunchUrl(uri)) {
+                                              await launchUrl(
+                                                uri,
+                                                mode: LaunchMode
+                                                    .externalApplication,
+                                              );
+                                              return true;
+                                            }
+
+                                            return false;
+                                          },
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(height: 15),
-                                  HtmlWidget(
-                                    studyContent.isEmpty
-                                        ? "No content available."
-                                        : studyContent,
-                                    textStyle: const TextStyle(
-                                      fontSize:
-                                          20, // Slightly larger for better readability
-                                      height: 1.6, // Comfortable line spacing
-                                      fontFamily:
-                                          'Georgia', // Or your custom serif font
-                                      color: Color(
-                                        0xFF2C3E50,
-                                      ), // Darker grey, easier on the eyes than pure black
-                                    ),
-                                    // Style specific HTML tags like <a> (Bible links)
-                                    customStylesBuilder: (element) {
-                                      if (element.localName == 'a') {
-                                        return {
-                                          'color':
-                                              '#1A73E8', // Nice "Google Blue" for links
-                                          'text-decoration': 'none',
-                                          'font-weight': 'bold',
-                                        };
-                                      }
-                                      return null;
-                                    },
-                                    onTapUrl: (url) {
-                                      if (url.startsWith(
-                                        'sabbath-school://bible',
-                                      )) {
-                                        _showBibleVerse(
-                                          context,
-                                          url,
-                                          activeDay,
-                                        );
-                                        return true;
-                                      }
-                                      return false;
-                                    },
                                   ),
                                 ],
                               ),
@@ -230,26 +264,154 @@ class ReaderScreen extends ConsumerWidget {
           ),
         );
       },
-      loading: () =>
-          const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (err, stack) => Scaffold(body: Center(child: Text("Error: $err"))),
+      loading: () => Scaffold(
+        backgroundColor: backgroundColor,
+        body: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (err, stack) => Scaffold(
+        backgroundColor: backgroundColor,
+        body: Center(
+          child: Text(
+            "Error: $err",
+            style: TextStyle(color: isDark ? Colors.white : Colors.black),
+          ),
+        ),
+      ),
     );
   }
+
+  // --- BIBLE VERSE MODAL ---
+  void _showBibleVerse(
+    BuildContext context,
+    String url,
+    reader.Day activeDay,
+    bool isDark,
+  ) {
+    final uri = Uri.parse(url);
+    final String verseReference = uri.queryParameters['verse'] ?? "Verse";
+    final String version = uri.queryParameters['version'] ?? "NIV";
+
+    final verseData = activeDay.bible?.firstWhere(
+      (v) =>
+          v.name.replaceAll(' ', '').toLowerCase() ==
+          verseReference.replaceAll(' ', '').toLowerCase(),
+      orElse: () => reader.BibleVerse(
+        name: verseReference,
+        content: "<p><i>Verse content not found in lesson data.</i></p>",
+      ),
+    );
+
+    final modalBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final headerColor = isDark ? Colors.grey[400] : Colors.blueGrey;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+        decoration: BoxDecoration(
+          color: modalBg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.grey[700] : Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        verseData?.name ?? verseReference,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
+                      ),
+                      Text(
+                        version,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: headerColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, color: textColor),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(color: isDark ? Colors.grey[800] : Colors.grey[200]),
+            const SizedBox(height: 10),
+
+            // --- 2. WRAP VERSE CONTENT IN SELECTIONAREA ---
+            Flexible(
+              child: SingleChildScrollView(
+                child: SelectionArea(
+                  child: HtmlWidget(
+                    verseData?.content ?? "",
+                    textStyle: TextStyle(
+                      fontSize: 18,
+                      height: 1.5,
+                      fontStyle: FontStyle.italic,
+                      fontFamily: 'Georgia',
+                      color: textColor,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- HELPER METHODS (Unchanged) ---
 
   Widget _buildNavigationMenu(
     BuildContext context,
     List<reader.Day> daysList,
     int activeIndex, {
     required bool isDrawer,
+    required bool isDark,
   }) {
+    final bgColor = isDrawer
+        ? (isDark ? const Color(0xFF1E1E1E) : Colors.white)
+        : (isDark ? const Color(0xFF121212) : Colors.grey[50]);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final secondaryTextColor = isDark ? Colors.grey[400] : Colors.black87;
+
     return Container(
       width: 300,
-      // Ensure the background is solid white for the drawer
-      color: isDrawer ? Colors.white : Colors.grey[50],
+      color: bgColor,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. NAVIGATION HEADER (Visible on Mobile/Drawer)
           if (isDrawer)
             SafeArea(
               bottom: false,
@@ -258,14 +420,13 @@ class ReaderScreen extends ConsumerWidget {
                 child: Row(
                   children: [
                     IconButton(
-                      // Changed to black for visibility on white background
-                      icon: const Icon(Icons.arrow_back, color: Colors.black87),
+                      icon: Icon(Icons.arrow_back, color: textColor),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    const Text(
+                    Text(
                       "Back",
                       style: TextStyle(
-                        color: Colors.black87,
+                        color: textColor,
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
@@ -274,22 +435,19 @@ class ReaderScreen extends ConsumerWidget {
                 ),
               ),
             ),
-
-          // 2. LESSON TITLE SECTION
           Container(
             padding: EdgeInsets.fromLTRB(20, isDrawer ? 10 : 40, 20, 20),
+            alignment: Alignment.centerLeft,
             child: Text(
               lessonTitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 18,
-                color: Colors.black87, // High contrast text
+                color: textColor,
               ),
             ),
           ),
-
-          const Divider(height: 1), // Subtle separator
-          // 3. DAYS LIST
+          const Divider(height: 1),
           Expanded(
             child: ListView.builder(
               padding: EdgeInsets.zero,
@@ -300,11 +458,15 @@ class ReaderScreen extends ConsumerWidget {
 
                 return ListTile(
                   selected: isSelected,
-                  selectedTileColor: Colors.blue.withOpacity(0.1),
+                  selectedTileColor: isDark
+                      ? Colors.blue.withOpacity(0.2)
+                      : Colors.blue.withOpacity(0.1),
                   leading: Icon(
                     Icons.calendar_today_outlined,
                     size: 18,
-                    color: isSelected ? Colors.blue : Colors.grey,
+                    color: isSelected
+                        ? Colors.blue
+                        : (isDark ? Colors.grey : Colors.grey),
                   ),
                   title: Text(
                     day.title,
@@ -312,10 +474,15 @@ class ReaderScreen extends ConsumerWidget {
                       fontWeight: isSelected
                           ? FontWeight.bold
                           : FontWeight.normal,
-                      color: isSelected ? Colors.blue : Colors.black87,
+                      color: isSelected ? Colors.blue : secondaryTextColor,
                     ),
                   ),
-                  subtitle: Text(day.date),
+                  subtitle: Text(
+                    day.date,
+                    style: TextStyle(
+                      color: isDark ? Colors.grey[500] : Colors.grey[600],
+                    ),
+                  ),
                   onTap: () {
                     if (isDrawer) Navigator.pop(context);
                     _navigateToDay(context, daysList, index);
@@ -333,21 +500,24 @@ class ReaderScreen extends ConsumerWidget {
     BuildContext context,
     List<reader.Day> daysList,
     int activeIndex,
+    bool isDark,
   ) {
     final hasPrev = activeIndex > 0;
     final hasNext = activeIndex < daysList.length - 1;
-
-    // Calculate current day for display (e.g., Day 1 of 7)
     final int currentDayNumber = activeIndex + 1;
     final int totalDays = daysList.length;
 
+    final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final borderColor = isDark ? Colors.white10 : Colors.grey.shade200;
+    final labelColor = isDark ? Colors.grey[400] : Colors.blueGrey;
+
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        color: bgColor,
+        border: Border(top: BorderSide(color: borderColor)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 10,
             offset: const Offset(0, -5),
           ),
@@ -359,7 +529,6 @@ class ReaderScreen extends ConsumerWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // PREVIOUS BUTTON - ORANGE
               if (hasPrev)
                 ElevatedButton(
                   onPressed: () =>
@@ -367,10 +536,7 @@ class ReaderScreen extends ConsumerWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange[700],
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
+                    padding: const EdgeInsets.all(12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -378,29 +544,29 @@ class ReaderScreen extends ConsumerWidget {
                   child: const Icon(Icons.arrow_back_ios, size: 18),
                 )
               else
-                const SizedBox(
-                  width: 48,
-                ), // Match button width to keep center label aligned
-              // DAY PROGRESS LABEL
+                const SizedBox(width: 48),
+
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     "DAY $currentDayNumber",
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
-                      color: Colors.blueGrey,
+                      color: labelColor,
                     ),
                   ),
                   Text(
                     "of $totalDays",
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.grey[600] : Colors.grey[600],
+                    ),
                   ),
                 ],
               ),
 
-              // NEXT BUTTON - BLUE
               if (hasNext)
                 ElevatedButton(
                   onPressed: () =>
@@ -408,10 +574,7 @@ class ReaderScreen extends ConsumerWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blue[700],
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
+                    padding: const EdgeInsets.all(12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -429,16 +592,16 @@ class ReaderScreen extends ConsumerWidget {
 
   Widget _buildHeaderImage(String title, String? imageUrl) {
     return Container(
-      height: 300,
+      height: 250,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.blueGrey[900],
+        color: Colors.grey[800],
         image: (imageUrl != null && imageUrl.isNotEmpty)
             ? DecorationImage(
                 image: NetworkImage(imageUrl),
                 fit: BoxFit.cover,
                 colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.3),
+                  Colors.black.withOpacity(0.4),
                   BlendMode.darken,
                 ),
               )
@@ -481,100 +644,18 @@ class ReaderScreen extends ConsumerWidget {
     );
   }
 
-  void _showBibleVerse(BuildContext context, String url, reader.Day activeDay) {
-    final uri = Uri.parse(url);
-    // Get reference (e.g., "John 3:16")
-    final String verseReference = uri.queryParameters['verse'] ?? "Verse";
-    final verseData = activeDay.bible?.firstWhere(
-      (v) => v.name.replaceAll(' ', '') == verseReference.replaceAll(' ', ''),
-      orElse: () => reader.BibleVerse(
-        name: verseReference,
-        content: "Verse text not available.",
-      ),
-    );
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true, // Allows the sheet to expand for long verses
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // A small handle at the top for better UI
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 15),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  verseData?.name ?? verseReference,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blueGrey,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const Divider(),
-            const SizedBox(height: 10),
-            // 3. Use HtmlWidget here because verse content often contains <b> or <i> tags
-            Flexible(
-              child: SingleChildScrollView(
-                child: HtmlWidget(
-                  verseData?.content ?? "Content not found.",
-                  textStyle: const TextStyle(
-                    fontSize: 18,
-                    fontStyle: FontStyle.italic,
-                    height: 1.5,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _handleDownload(BuildContext context, WidgetRef ref) async {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Downloading lesson for offline use..."),
-        duration: Duration(seconds: 2),
-      ),
+      const SnackBar(content: Text("Downloading lesson for offline use...")),
     );
 
     try {
-      // 1. Fetch the data
       final content = await ref
           .read(apiProvider)
           .fetchLessonContent(lessonIndex);
-
-      // 2. Get directory
       final directory = await getApplicationDocumentsDirectory();
       final fileName = "${lessonIndex.replaceAll('/', '_')}.json";
       final file = File('${directory.path}/$fileName');
-
-      // 3. Save the file (requires the toJson changes in your model file)
       final String jsonString = jsonEncode(content.toJson());
       await file.writeAsString(jsonString);
 

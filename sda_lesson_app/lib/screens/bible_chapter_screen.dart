@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
-import 'bible_reader_screen.dart'; // We will create this next
+import 'bible_reader_screen.dart';
+import 'bible_verse_screen.dart'; // <--- 1. ADDED IMPORT
 
 class BibleChapterScreen extends ConsumerWidget {
   final String bookId;
@@ -15,18 +16,28 @@ class BibleChapterScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Theme Logic
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFFBFBFD);
+    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
     return Scaffold(
+      backgroundColor: backgroundColor,
       appBar: AppBar(
-        title: Text(bookName),
+        title: Text(bookName, style: TextStyle(color: textColor)),
         centerTitle: true,
+        backgroundColor: backgroundColor,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
         actions: [
-          // SEARCH BUTTON
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () {
               showSearch(
                 context: context,
-                // We pass the current bookId so user can search inside THIS book
                 delegate: BibleSearchDelegate(
                   initialBookId: bookId,
                   initialBookName: bookName,
@@ -43,7 +54,12 @@ class BibleChapterScreen extends ConsumerWidget {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(child: Text("Error: ${snapshot.error}"));
+            return Center(
+              child: Text(
+                "Error: ${snapshot.error}",
+                style: TextStyle(color: textColor),
+              ),
+            );
           }
 
           final chapters = snapshot.data ?? [];
@@ -61,31 +77,36 @@ class BibleChapterScreen extends ConsumerWidget {
             itemCount: filteredChapters.length,
             itemBuilder: (context, index) {
               final chapter = filteredChapters[index];
+
               return InkWell(
                 onTap: () {
+                  // 2. NAVIGATE TO VERSE SCREEN (Instead of Reader)
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => BibleReaderScreen(
-                        chapterId: chapter['id'], // e.g., "GEN.1"
-                        reference: chapter['reference'], // e.g., "Genesis 1"
+                      builder: (context) => BibleVerseScreen(
+                        bookId: bookId,
+                        bookName: bookName,
+                        chapterId: chapter['id'],
+                        chapterNumber: chapter['number'],
                       ),
                     ),
                   );
                 },
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12), // Softer corners
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.2),
-                        spreadRadius: 1,
+                        color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
                         blurRadius: 3,
                         offset: const Offset(0, 2),
                       ),
                     ],
-                    border: Border.all(color: Colors.blue.shade100),
+                    border: Border.all(
+                      color: isDark ? Colors.white10 : Colors.blue.shade100,
+                    ),
                   ),
                   alignment: Alignment.center,
                   child: Text(
@@ -93,7 +114,7 @@ class BibleChapterScreen extends ConsumerWidget {
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
-                      color: Colors.blue.shade800,
+                      color: isDark ? Colors.white : Colors.blue.shade800,
                     ),
                   ),
                 ),
@@ -135,8 +156,6 @@ class BibleSearchDelegate extends SearchDelegate {
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      // Search inside the current book by default.
-      // You can change 'bookId' to 'ALL' to search everywhere.
       future: _api.searchBible(query, bookId: initialBookId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -149,6 +168,7 @@ class BibleSearchDelegate extends SearchDelegate {
         }
 
         final results = snapshot.data!;
+
         return ListView.separated(
           itemCount: results.length,
           separatorBuilder: (c, i) => const Divider(),
@@ -159,10 +179,23 @@ class BibleSearchDelegate extends SearchDelegate {
                 item['reference'] ?? "Unknown",
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: Text(item['text'] ?? ""),
+              subtitle: Text(
+                item['text'] ?? "",
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
               onTap: () {
-                // Optional: Navigate to that verse
-                // You would need to parse the reference to get the chapter ID
+                // 3. SEARCH GOES DIRECTLY TO READER
+                // (Because search results are specific verses, not whole chapters)
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => BibleReaderScreen(
+                      chapterId: item['chapterId'],
+                      reference: item['reference'],
+                    ),
+                  ),
+                );
               },
             );
           },

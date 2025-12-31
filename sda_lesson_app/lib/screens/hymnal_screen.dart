@@ -19,7 +19,6 @@ class HymnalScreen extends ConsumerWidget {
   }
 
   // --- JUMP TO NUMBER DIALOG ---
-  // --- FULL JUMP TO NUMBER DIALOG ---
   void _showJumpToDialog(
     BuildContext context,
     WidgetRef ref,
@@ -27,33 +26,44 @@ class HymnalScreen extends ConsumerWidget {
   ) {
     String input = "";
 
+    // 1. Theme Logic for Dialog
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final dialogBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black;
+    // FIX: Use White for the big display number in Dark Mode
+    final displayColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
+    final btnBg = isDark ? Colors.grey[800] : Colors.grey[200];
+
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
+              backgroundColor: dialogBg,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),
-              title: const Text("Go to Hymn", textAlign: TextAlign.center),
+              title: Text(
+                "Go to Hymn",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: textColor),
+              ),
               content: SizedBox(
-                // Give the dialog content a fixed width to prevent layout recalculation
                 width: MediaQuery.of(context).size.width * 0.7,
                 child: Column(
-                  mainAxisSize: MainAxisSize
-                      .min, // Tell the column to be as small as possible
+                  mainAxisSize: MainAxisSize.min,
                   children: [
+                    // THE INPUT DISPLAY
                     Text(
                       input.isEmpty ? "---" : input,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 40,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF7D2D3B),
+                        color: displayColor, // <--- FIXED COLOR HERE
                       ),
                     ),
                     const SizedBox(height: 20),
-                    // Constrain the GridView height so it doesn't return "no size"
                     SizedBox(
                       height: 280,
                       child: GridView.builder(
@@ -64,8 +74,7 @@ class HymnalScreen extends ConsumerWidget {
                               crossAxisCount: 3,
                               mainAxisSpacing: 8,
                               crossAxisSpacing: 8,
-                              childAspectRatio:
-                                  1.3, // Makes the buttons slightly wider
+                              childAspectRatio: 1.3,
                             ),
                         itemCount: 12,
                         itemBuilder: (context, index) {
@@ -75,15 +84,18 @@ class HymnalScreen extends ConsumerWidget {
                           if (index == 10) label = "0";
                           if (index == 11) label = "GO";
 
+                          // 'GO' button stays Red brand color
+                          final isGoBtn = label == "GO";
+
                           return ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               padding: EdgeInsets.zero,
-                              backgroundColor: label == "GO"
+                              backgroundColor: isGoBtn
                                   ? const Color(0xFF7D2D3B)
-                                  : Colors.grey[200],
-                              foregroundColor: label == "GO"
+                                  : btnBg,
+                              foregroundColor: isGoBtn
                                   ? Colors.white
-                                  : Colors.black,
+                                  : textColor,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -140,10 +152,17 @@ class HymnalScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final filteredHymnsAsync = ref.watch(filteredHymnsProvider);
 
+    // 2. Theme Logic for Main Screen
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF7F4F2);
+    final appBarColor = const Color(0xFF7D2D3B);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F4F2),
+      backgroundColor: backgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF7D2D3B),
+        backgroundColor: appBarColor,
         elevation: 0,
         title: const Text("Hymnal", style: TextStyle(color: Colors.white)),
         leading: const Icon(Icons.chevron_left, color: Colors.white),
@@ -151,10 +170,10 @@ class HymnalScreen extends ConsumerWidget {
       body: filteredHymnsAsync.when(
         data: (hymns) => Column(
           children: [
-            _buildHeader(context, ref, hymns),
-            _buildCategoryTabs(ref),
-            Expanded(child: _buildMainList(context, ref, hymns)),
-            _buildMiniPlayer(ref),
+            _buildHeader(context, ref, hymns, isDark),
+            _buildCategoryTabs(ref, isDark),
+            Expanded(child: _buildMainList(context, ref, hymns, isDark)),
+            _buildMiniPlayer(ref, isDark),
           ],
         ),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -163,7 +182,12 @@ class HymnalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, WidgetRef ref, List<Hymn> hymns) {
+  Widget _buildHeader(
+    BuildContext context,
+    WidgetRef ref,
+    List<Hymn> hymns,
+    bool isDark,
+  ) {
     return Container(
       color: const Color(0xFF7D2D3B),
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -171,13 +195,17 @@ class HymnalScreen extends ConsumerWidget {
         children: [
           Expanded(
             child: TextField(
+              style: TextStyle(color: isDark ? Colors.white : Colors.black),
               onChanged: (val) =>
                   ref.read(hymnSearchProvider.notifier).state = val,
               decoration: InputDecoration(
                 hintText: "Search title or number",
-                prefixIcon: const Icon(Icons.search),
+                hintStyle: TextStyle(
+                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                ),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: isDark ? Colors.grey[800] : Colors.white,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -195,43 +223,53 @@ class HymnalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildCategoryTabs(WidgetRef ref) {
+  Widget _buildCategoryTabs(WidgetRef ref, bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _filterChip(ref, "Numerical"),
-          _filterChip(ref, "Alphabet"),
-          _filterChip(ref, "Topics"),
+          _filterChip(ref, "Numerical", isDark),
+          _filterChip(ref, "Alphabet", isDark),
+          _filterChip(ref, "Topics", isDark),
         ],
       ),
     );
   }
 
-  Widget _filterChip(WidgetRef ref, String label) {
+  Widget _filterChip(WidgetRef ref, String label, bool isDark) {
     final currentMode = ref.watch(hymnSortModeProvider);
     final isSelected = currentMode == label;
+
+    final selectedBg = isDark ? Colors.grey[800] : const Color(0xFFEDE7E3);
+    final textColor = isDark ? Colors.white : Colors.black;
+    final unselectedColor = isDark ? Colors.grey[500] : Colors.grey[600];
+
     return GestureDetector(
       onTap: () => ref.read(hymnSortModeProvider.notifier).state = label,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFEDE7E3) : Colors.transparent,
+          color: isSelected ? selectedBg : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: isSelected ? Colors.black : Colors.grey[600],
+            color: isSelected ? textColor : unselectedColor,
           ),
         ),
       ),
     );
   }
 
-  Widget _buildMainList(BuildContext context, WidgetRef ref, List<Hymn> hymns) {
+  Widget _buildMainList(
+    BuildContext context,
+    WidgetRef ref,
+    List<Hymn> hymns,
+    bool isDark,
+  ) {
     final sortMode = ref.watch(hymnSortModeProvider);
 
     if (sortMode != 'Topics') {
@@ -239,7 +277,7 @@ class HymnalScreen extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: hymns.length,
         itemBuilder: (context, index) =>
-            _buildHymnCard(context, hymns[index], hymns),
+            _buildHymnCard(context, hymns[index], hymns, isDark),
       );
     }
 
@@ -253,14 +291,21 @@ class HymnalScreen extends ConsumerWidget {
           slivers: [
             SliverPersistentHeader(
               pinned: true,
-              delegate: _StickyTopicHeaderDelegate(title: topic),
+              delegate: _StickyTopicHeaderDelegate(
+                title: topic,
+                isDark: isDark,
+              ),
             ),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) =>
-                      _buildHymnCard(context, topicHymns[index], topicHymns),
+                  (context, index) => _buildHymnCard(
+                    context,
+                    topicHymns[index],
+                    topicHymns,
+                    isDark,
+                  ),
                   childCount: topicHymns.length,
                 ),
               ),
@@ -271,33 +316,49 @@ class HymnalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildHymnCard(BuildContext context, Hymn hymn, List<Hymn> allHymns) {
+  Widget _buildHymnCard(
+    BuildContext context,
+    Hymn hymn,
+    List<Hymn> allHymns,
+    bool isDark,
+  ) {
+    // 3. Theme Colors for List Item
+    final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black;
+    final subtitleColor = isDark ? Colors.grey[400] : Colors.black;
+    final avatarBg = isDark ? Colors.grey[800] : const Color(0xFFF7F4F2);
+    // FIX: Use White for numbers in Dark Mode
+    final numberColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black.withOpacity(0.05)),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.black.withOpacity(0.05),
+        ),
       ),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: const Color(0xFFF7F4F2),
+          backgroundColor: avatarBg,
           child: Text(
             "${hymn.id}",
-            style: const TextStyle(
-              color: Color(0xFF7D2D3B),
+            style: TextStyle(
+              color: numberColor, // <--- FIXED COLOR HERE
               fontWeight: FontWeight.bold,
             ),
           ),
         ),
         title: Text(
           hymn.title,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
         ),
         subtitle: Text(
           hymn.lyrics.split('\n').first,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: subtitleColor),
         ),
         trailing: const Icon(Icons.play_arrow_rounded, color: Colors.grey),
         onTap: () {
@@ -313,7 +374,7 @@ class HymnalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildMiniPlayer(WidgetRef ref) {
+  Widget _buildMiniPlayer(WidgetRef ref, bool isDark) {
     final audio = ref.watch(audioProvider);
     if (audio.currentHymn == null) return const SizedBox.shrink();
 
@@ -321,18 +382,26 @@ class HymnalScreen extends ConsumerWidget {
         ? audio.position.inSeconds / audio.duration.inSeconds
         : 0.0;
 
+    final playerBg = isDark ? const Color(0xFF2C2C2C) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Colors.black12, width: 0.5)),
+      decoration: BoxDecoration(
+        color: playerBg,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? Colors.white10 : Colors.black12,
+            width: 0.5,
+          ),
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           LinearProgressIndicator(
             value: progress,
-            backgroundColor: Colors.grey[200],
+            backgroundColor: isDark ? Colors.grey[700] : Colors.grey[200],
             valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7D2D3B)),
             minHeight: 2,
           ),
@@ -349,9 +418,10 @@ class HymnalScreen extends ConsumerWidget {
                     ),
                     Text(
                       audio.currentHymn!.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
+                        color: textColor,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -365,7 +435,7 @@ class HymnalScreen extends ConsumerWidget {
                       : Icons.play_circle_filled,
                 ),
                 iconSize: 40,
-                color: const Color(0xFF333333),
+                color: isDark ? Colors.white : const Color(0xFF333333),
                 onPressed: () => ref.read(audioProvider.notifier).togglePlay(),
               ),
             ],
@@ -378,7 +448,8 @@ class HymnalScreen extends ConsumerWidget {
 
 class _StickyTopicHeaderDelegate extends SliverPersistentHeaderDelegate {
   final String title;
-  _StickyTopicHeaderDelegate({required this.title});
+  final bool isDark;
+  _StickyTopicHeaderDelegate({required this.title, required this.isDark});
 
   @override
   Widget build(
@@ -388,15 +459,16 @@ class _StickyTopicHeaderDelegate extends SliverPersistentHeaderDelegate {
   ) {
     return Container(
       height: 40,
-      color: const Color(0xFFF7F4F2),
+      color: isDark ? const Color(0xFF121212) : const Color(0xFFF7F4F2),
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Text(
         title.toUpperCase(),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w900,
-          color: Color(0xFF7D2D3B),
+          // FIX: Use White for topic headers in Dark Mode
+          color: isDark ? Colors.white70 : const Color(0xFF7D2D3B),
           letterSpacing: 1.1,
         ),
       ),
@@ -408,6 +480,6 @@ class _StickyTopicHeaderDelegate extends SliverPersistentHeaderDelegate {
   @override
   double get minExtent => 40;
   @override
-  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) =>
-      false;
+  bool shouldRebuild(covariant _StickyTopicHeaderDelegate oldDelegate) =>
+      oldDelegate.title != title || oldDelegate.isDark != isDark;
 }

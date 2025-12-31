@@ -15,7 +15,6 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
 
-  // 1. Create unique GlobalKeys for each tab to track their individual navigation stacks
   final List<GlobalKey<NavigatorState>> _navigatorKeys = [
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
@@ -26,8 +25,18 @@ class _MainNavigationState extends State<MainNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    // 2. Wrap the app in WillPopScope to handle the "Back" button correctly
-    // This ensures if you press back, it navigates back inside the tab instead of closing the app
+    // 1. THEME DETECTION
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 2. DYNAMIC COLORS
+    // Dark Mode: Dark Grey Background, White Active Icon
+    // Light Mode: White Background, Deep Blue Active Icon
+    final navBarColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final selectedItemColor = isDark
+        ? Colors.white
+        : const Color.fromARGB(255, 1, 5, 66);
+    final unselectedItemColor = isDark ? Colors.grey[600] : Colors.grey;
+
     return WillPopScope(
       onWillPop: () async {
         final isFirstRouteInCurrentTab = !await _navigatorKeys[_currentIndex]
@@ -46,45 +55,61 @@ class _MainNavigationState extends State<MainNavigation> {
             _buildTab(4, const BibleScreen()),
           ],
         ),
-        bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            if (_currentIndex == index) {
-              // If user taps the current tab again, pop to the root of that tab
-              _navigatorKeys[index].currentState!.popUntil(
-                (route) => route.isFirst,
-              );
-            } else {
-              setState(() => _currentIndex = index);
-            }
-          },
-          type: BottomNavigationBarType.fixed,
-          selectedItemColor: const Color.fromARGB(255, 1, 5, 66),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.auto_stories),
-              label: 'EGW',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.music_note),
-              label: 'Hymns',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.menu_book),
-              label: 'Lessons',
-            ),
-            BottomNavigationBarItem(icon: Icon(Icons.book), label: 'Bible'),
-          ],
+        // 3. Wrap in Theme to ensure background color applies correctly
+        bottomNavigationBar: Theme(
+          data: Theme.of(context).copyWith(
+            canvasColor:
+                navBarColor, // Fixes background glitches on some devices
+          ),
+          child: BottomNavigationBar(
+            currentIndex: _currentIndex,
+            onTap: (index) {
+              if (_currentIndex == index) {
+                _navigatorKeys[index].currentState!.popUntil(
+                  (route) => route.isFirst,
+                );
+              } else {
+                setState(() => _currentIndex = index);
+              }
+            },
+            type: BottomNavigationBarType.fixed,
+            backgroundColor: navBarColor, // Dynamic Background
+            selectedItemColor: selectedItemColor, // Dynamic Active Color
+            unselectedItemColor: unselectedItemColor, // Dynamic Inactive Color
+            showUnselectedLabels: true,
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home),
+                label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.auto_stories_outlined),
+                activeIcon: Icon(Icons.auto_stories),
+                label: 'EGW',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.music_note_outlined),
+                activeIcon: Icon(Icons.music_note),
+                label: 'Hymns',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.menu_book_outlined),
+                activeIcon: Icon(Icons.menu_book),
+                label: 'Lessons',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.book_outlined),
+                activeIcon: Icon(Icons.book),
+                label: 'Bible',
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // 3. Helper method to build a Navigator for each tab
   Widget _buildTab(int index, Widget rootPage) {
     return Navigator(
       key: _navigatorKeys[index],

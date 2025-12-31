@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/daily_verse_service.dart';
+import '../providers/data_providers.dart';
 import 'hymnal_screen.dart';
-import 'settings_screen.dart'; // 1. IMPORT SETTINGS SCREEN
+import 'settings_screen.dart';
+import 'bible_screen.dart';
+import 'egw_library_screen.dart';
+import 'home_screen.dart';
+import 'lesson_list_screen.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   String _getGreeting() {
@@ -14,38 +20,51 @@ class DashboardScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final todayVerse = DailyVerseService.getTodayVerse();
+    final asyncQuarterlies = ref.watch(quarterlyListProvider);
+
+    // 1. Theme Detection
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 2. Dynamic Colors
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFFBFBFD);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final iconColor = isDark ? Colors.white : Colors.black87;
+    final avatarBg = isDark ? Colors.grey[800] : Colors.grey[200];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFBFBFD),
+      backgroundColor: backgroundColor, // Dynamic Background
       body: CustomScrollView(
         slivers: [
-          // 1. MODERN APP BAR
           SliverAppBar(
             expandedHeight: 100.0,
             floating: true,
             pinned: true,
             elevation: 0,
-            backgroundColor: const Color(0xFFFBFBFD),
+            backgroundColor: backgroundColor, // Dynamic AppBar Bg
             centerTitle: false,
             title: Padding(
               padding: const EdgeInsets.only(top: 20),
               child: Text(
                 _getGreeting(),
-                style: const TextStyle(
-                  color: Colors.black87,
+                style: TextStyle(
+                  color: textColor, // Dynamic Text Color
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
             actions: [
-              // 2. ADDED SETTINGS BUTTON HERE
               Padding(
                 padding: const EdgeInsets.only(top: 20),
                 child: IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.black87),
+                  icon: Icon(
+                    Icons.settings,
+                    color: iconColor,
+                  ), // Dynamic Icon Color
                   tooltip: "Settings",
                   onPressed: () {
                     Navigator.push(
@@ -57,14 +76,13 @@ class DashboardScreen extends StatelessWidget {
                   },
                 ),
               ),
-              // EXISTING PROFILE ICON
               Padding(
                 padding: const EdgeInsets.only(right: 16, top: 20),
                 child: CircleAvatar(
-                  backgroundColor: Colors.grey[200],
-                  child: const Icon(
+                  backgroundColor: avatarBg, // Dynamic Avatar Bg
+                  child: Icon(
                     Icons.person_outline,
-                    color: Colors.black87,
+                    color: iconColor, // Dynamic Icon Color
                   ),
                 ),
               ),
@@ -77,26 +95,49 @@ class DashboardScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 2. DAILY VERSE CARD
                   _buildDailyVerseCard(todayVerse),
 
                   const SizedBox(height: 32),
 
-                  // 3. CURRENT LESSON SECTION
                   const _SectionLabel(label: "Current Study"),
                   const SizedBox(height: 12),
-                  _buildSabbathSchoolCard(context),
+
+                  // Real Data Logic
+                  asyncQuarterlies.when(
+                    data: (quarterlies) {
+                      if (quarterlies.isEmpty) {
+                        return Text(
+                          "No lessons available.",
+                          style: TextStyle(color: textColor),
+                        );
+                      }
+                      final currentQuarterly = quarterlies.first;
+                      return _buildSabbathSchoolCard(
+                        context,
+                        currentQuarterly,
+                        isDark,
+                      );
+                    },
+                    loading: () => const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20.0),
+                        child: CircularProgressIndicator(),
+                      ),
+                    ),
+                    error: (err, stack) => Text(
+                      "Error loading study: $err",
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
 
                   const SizedBox(height: 32),
 
-                  // 4. QUICK STUDY GRID
                   const _SectionLabel(label: "Quick Study"),
                   const SizedBox(height: 12),
                   _buildQuickStudyGrid(context),
 
                   const SizedBox(height: 32),
 
-                  // 5. ADDITIONAL RESOURCES
                   const _SectionLabel(label: "More Resources"),
                   const SizedBox(height: 12),
                   _buildHymnalTile(context),
@@ -157,10 +198,23 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSabbathSchoolCard(BuildContext context) {
+  // Updated to accept isDark flag
+  Widget _buildSabbathSchoolCard(
+    BuildContext context,
+    dynamic quarterly,
+    bool isDark,
+  ) {
+    final cardColor = isDark
+        ? const Color(0xFF1E1E1E)
+        : Colors.white; // Dynamic Card Bg
+    final textColor = isDark
+        ? Colors.white
+        : Colors.black87; // Dynamic Text Color
+    final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
+
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
@@ -181,20 +235,42 @@ class DashboardScreen extends StatelessWidget {
           decoration: BoxDecoration(
             color: const Color(0xFF7D2D3B).withOpacity(0.1),
             borderRadius: BorderRadius.circular(12),
+            image: DecorationImage(
+              image: NetworkImage(quarterly.fullCoverUrl),
+              fit: BoxFit.cover,
+            ),
           ),
-          child: const Icon(Icons.auto_stories, color: Color(0xFF7D2D3B)),
         ),
-        title: const Text(
-          "Uniting Heaven and Earth",
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        title: Text(
+          quarterly.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: textColor,
+          ),
         ),
-        subtitle: const Text("Lesson 1 • Q1 2026"),
+        subtitle: Text(
+          quarterly.humanDate,
+          style: TextStyle(color: subTextColor),
+        ),
         trailing: const Icon(
           Icons.arrow_forward_ios,
           size: 16,
           color: Colors.grey,
         ),
-        onTap: () {},
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LessonListScreen(
+                quarterlyId: quarterly.id,
+                quarterlyTitle: quarterly.title,
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -203,23 +279,42 @@ class DashboardScreen extends StatelessWidget {
     final List<Map<String, dynamic>> items = [
       {
         'title': 'Lesson',
-        'img':
-            'https://images.unsplash.com/photo-1504052434139-441f742ca4a4?q=80&w=400',
+        'img': 'assets/images/lesson.png',
+        'onTap': () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (c) => const HomeScreen()),
+          );
+        },
       },
       {
         'title': 'Bible',
-        'img':
-            'https://images.unsplash.com/photo-1507434965515-61970f2bd7c6?q=80&w=400',
+        'img': 'assets/images/bible.png',
+        'onTap': () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (c) => const BibleScreen()),
+          );
+        },
       },
       {
         'title': 'EGW',
-        'img':
-            'https://images.unsplash.com/photo-1544640808-32ca72ac7f37?q=80&w=400',
+        'img': 'assets/images/egw.png',
+        'onTap': () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (c) => const EGWLibraryScreen()),
+          );
+        },
       },
       {
         'title': 'Sermons',
-        'img':
-            'https://images.unsplash.com/photo-1471341971476-ae15ff5dd4ad?q=80&w=400',
+        'img': 'assets/images/sermons.png',
+        'onTap': () {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text("Sermons Coming Soon!")));
+        },
       },
     ];
 
@@ -238,34 +333,46 @@ class DashboardScreen extends StatelessWidget {
           context,
           items[index]['title'],
           items[index]['img'],
+          items[index]['onTap'],
         );
       },
     );
   }
 
-  Widget _buildImageTile(BuildContext context, String title, String url) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        image: DecorationImage(image: NetworkImage(url), fit: BoxFit.cover),
-      ),
+  Widget _buildImageTile(
+    BuildContext context,
+    String title,
+    String imagePath,
+    VoidCallback? onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+          image: DecorationImage(
+            image: AssetImage(imagePath),
+            fit: BoxFit.cover,
           ),
         ),
-        padding: const EdgeInsets.all(16),
-        alignment: Alignment.bottomLeft,
-        child: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+            ),
+          ),
+          padding: const EdgeInsets.all(16),
+          alignment: Alignment.bottomLeft,
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
           ),
         ),
       ),
@@ -311,12 +418,18 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Dynamic text color for section labels
+    final textColor = Theme.of(context).brightness == Brightness.dark
+        ? Colors.grey[400]
+        : Colors
+              .grey[400]; // Keep light grey for both generally, or tweak if needed
+
     return Text(
       label,
       style: TextStyle(
         fontSize: 14,
         fontWeight: FontWeight.w900,
-        color: Colors.grey[400],
+        color: textColor,
         letterSpacing: 1.2,
       ),
     );

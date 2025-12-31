@@ -1,116 +1,171 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:html/parser.dart'
-    as html_parser; // REQUIRED: flutter pub add html
+import 'package:sqflite/sqflite.dart';
+import 'bible_database_helper.dart';
 
 class BibleApiService {
-  // 1. CREDENTIALS
-  // Using the key and endpoint from your dashboard screenshot
-  static const String _apiKey = "qRHgoKRLaEQbk1UQRt6oj";
-  static const String _baseUrl = "https://rest.api.bible";
+  final _dbHelper = BibleDatabaseHelper();
 
-  // Using ASV (Public Domain) to ensure no 403 Forbidden errors
-  static const String _bibleId = "06125adad2d5898a-01";
+  // --- 1. UPDATED MAPPING ---
+  // Keys now match the specific abbreviations in your DB (e.g. '1John', 'Mark')
+  static const Map<String, String> _bibleBooks = {
+    // Old Testament (These matched your previous request)
+    'Gen': 'Genesis',
+    'Exod': 'Exodus',
+    'Lev': 'Leviticus',
+    'Num': 'Numbers',
+    'Deut': 'Deuteronomy',
+    'Jos': 'Joshua',
+    'Judg': 'Judges',
+    'Ruth': 'Ruth',
+    '1Sam': '1 Samuel',
+    '2Sam': '2 Samuel',
+    '1Kgs': '1 Kings',
+    '2Kgs': '2 Kings',
+    '1Chr': '1 Chronicles',
+    '2Chr': '2 Chronicles',
+    'Ezra': 'Ezra',
+    'Neh': 'Nehemiah',
+    'Esth': 'Esther',
+    'Job': 'Job',
+    'Ps': 'Psalms',
+    'Prov': 'Proverbs',
+    'Eccl': 'Ecclesiastes',
+    'Song': 'Song of Solomon',
+    'Isa': 'Isaiah',
+    'Jer': 'Jeremiah',
+    'Lam': 'Lamentations',
+    'Ezek': 'Ezekiel',
+    'Dan': 'Daniel',
+    'Hos': 'Hosea',
+    'Joel': 'Joel',
+    'Amos': 'Amos',
+    'Obad': 'Obadiah',
+    'Jon': 'Jonah',
+    'Mic': 'Micah',
+    'Nah': 'Nahum',
+    'Hab': 'Habakkuk',
+    'Zeph': 'Zephaniah',
+    'Hag': 'Haggai',
+    'Zech': 'Zechariah',
+    'Mal': 'Malachi',
 
-  Map<String, String> get _headers => {
-    'api-key': _apiKey,
-    'Accept': 'application/json',
+    // New Testament (UPDATED KEYS TO FIX SORTING)
+    'Matt': 'Matthew',
+    'Mark': 'Mark', // Changed from 'Mar'
+    'Luke': 'Luke', // Changed from 'Luk'
+    'John': 'John', // Changed from 'Joh'
+    'Acts': 'Acts',
+    'Rom': 'Romans',
+    '1Cor': '1 Corinthians',
+    '2Cor': '2 Corinthians',
+    'Gal': 'Galatians',
+    'Eph': 'Ephesians',
+    'Phil': 'Philippians',
+    'Col': 'Colossians',
+    '1Thes': '1 Thessalonians', // Changed from '1Thess' to match DB ID
+    '2Thes': '2 Thessalonians', // Changed from '2Thess'
+    '1Tim': '1 Timothy',
+    '2Tim': '2 Timothy',
+    'Tit': 'Titus',
+    'Phlm': 'Philemon',
+    'Heb': 'Hebrews',
+    'Jas': 'James',
+    '1Pet': '1 Peter',
+    '2Pet': '2 Peter',
+    '1John': '1 John', // Changed from '1Jn' to match DB ID
+    '2John': '2 John', // Changed from '2Jn'
+    '3John': '3 John', // Changed from '3Jn'
+    'Jud': 'Jude',
+    'Rev': 'Revelation',
   };
 
-  // --- 2. FETCH ALL BOOKS ---
+  // --- 2. FETCH BOOKS ---
   Future<List<Map<String, dynamic>>> fetchBooks() async {
-    final url = '$_baseUrl/v1/bibles/$_bibleId/books';
+    final db = await _dbHelper.database;
 
-    try {
-      final response = await http.get(Uri.parse(url), headers: _headers);
+    // Get all book abbreviations present in the DB
+    final List<Map<String, dynamic>> rawMaps = await db.rawQuery(
+      'SELECT DISTINCT book FROM bible',
+    );
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        return List<Map<String, dynamic>>.from(data['data']);
-      } else {
-        print("❌ API Error: ${response.statusCode} - ${response.body}");
-        throw Exception('Failed to load Bible books');
+    // Create a Set for fast lookup
+    final Set<String> dbBookKeys = rawMaps
+        .map((m) => m['book'] as String)
+        .toSet();
+
+    List<Map<String, dynamic>> sortedList = [];
+
+    // Iterate through OUR master list to enforce Chronological Order
+    _bibleBooks.forEach((standardKey, fullName) {
+      // Check if this book exists in the DB
+      if (dbBookKeys.contains(standardKey)) {
+        sortedList.add({
+          'id': standardKey,
+          'name': fullName,
+          'nameLong': fullName,
+          'abbreviation': standardKey,
+        });
+        dbBookKeys.remove(standardKey);
       }
-    } catch (e) {
-      print("❌ Connection Error: $e");
-      rethrow;
+    });
+
+    // Add any remaining books (fallback for mismatched keys)
+    for (var remainingKey in dbBookKeys) {
+      sortedList.add({
+        'id': remainingKey,
+        'name': remainingKey,
+        'nameLong': remainingKey,
+        'abbreviation': remainingKey,
+      });
     }
+
+    return sortedList;
   }
 
   // --- 3. FETCH CHAPTERS ---
   Future<List<Map<String, dynamic>>> fetchChapters(String bookId) async {
-    final url = '$_baseUrl/v1/bibles/$_bibleId/books/$bookId/chapters';
+    final db = await _dbHelper.database;
 
-    final response = await http.get(Uri.parse(url), headers: _headers);
+    final List<Map<String, dynamic>> result = await db.rawQuery(
+      'SELECT DISTINCT chapter FROM bible WHERE book = ? ORDER BY chapter ASC',
+      [bookId],
+    );
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return List<Map<String, dynamic>>.from(data['data']);
-    } else {
-      throw Exception('Failed to load chapters');
-    }
+    return List.generate(result.length, (i) {
+      final chapterNum = result[i]['chapter'].toString();
+      final niceBookName = _bibleBooks[bookId] ?? bookId;
+
+      return {
+        'id': '$bookId.$chapterNum',
+        'number': chapterNum,
+        'reference': '$niceBookName $chapterNum',
+      };
+    });
   }
 
-  // --- 4. FETCH CONTENT (THE FIX FOR EMPTY TEXT) ---
+  // --- 4. FETCH VERSES (CLEAN TAGS) ---
   Future<List<Map<String, String>>> fetchChapterVerses(String chapterId) async {
-    // Request HTML content from the API
-    final url =
-        '$_baseUrl/v1/bibles/$_bibleId/chapters/$chapterId?content-type=html';
+    final int lastDotIndex = chapterId.lastIndexOf('.');
+    if (lastDotIndex == -1) return [];
 
-    final response = await http.get(Uri.parse(url), headers: _headers);
+    final String bookName = chapterId.substring(0, lastDotIndex);
+    final String chapterNum = chapterId.substring(lastDotIndex + 1);
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      String rawHtml = data['data']['content'];
+    final db = await _dbHelper.database;
 
-      // PARSING LOGIC:
-      // The API returns: <span data-number="1">1</span> THE TEXT IS HERE
-      // We must grab the text node that follows the span.
-      var document = html_parser.parse(rawHtml);
-      List<Map<String, String>> verses = [];
+    final List<Map<String, dynamic>> maps = await db.query(
+      'bible',
+      columns: ['verse', 'content'],
+      where: 'book = ? AND chapter = ?',
+      whereArgs: [bookName, chapterNum],
+      orderBy: 'verse ASC',
+    );
 
-      var verseSpans = document.querySelectorAll('span[data-number]');
+    return List.generate(maps.length, (i) {
+      String rawContent = maps[i]['content'].toString();
+      String cleanText = rawContent.replaceAll(RegExp(r'<[^>]*>'), '');
 
-      for (var span in verseSpans) {
-        String number = span.attributes['data-number'] ?? "0";
-        String text = "";
-
-        // PARENT NODE NAVIGATION
-        // 1. Get the parent (usually a <p> or <div class="p">)
-        var parent = span.parentNode;
-
-        if (parent != null) {
-          // 2. Find where this span is inside the parent
-          int index = parent.nodes.indexOf(span);
-
-          // 3. Look at the immediate next node
-          if (index + 1 < parent.nodes.length) {
-            var nextNode = parent.nodes[index + 1];
-
-            // If the next node is just text, use it
-            if (nextNode.nodeType == 3) {
-              // 3 = Text Node
-              text = nextNode.text ?? "";
-            }
-            // If the next node is another element (like a highlight), grab its text
-            else {
-              text = nextNode.text ?? "";
-            }
-          }
-        }
-
-        // Clean up text
-        text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-        // Only add if we successfully found text
-        if (text.isNotEmpty) {
-          verses.add({"number": number, "text": text});
-        }
-      }
-      return verses;
-    } else {
-      throw Exception('Failed to load content');
-    }
+      return {'number': maps[i]['verse'].toString(), 'text': cleanText.trim()};
+    });
   }
 
   // --- 5. SEARCH FUNCTION ---
@@ -118,30 +173,32 @@ class BibleApiService {
     String query, {
     String? bookId,
   }) async {
-    // Basic search endpoint
-    String url = '$_baseUrl/v1/bibles/$_bibleId/search?query=$query&limit=20';
+    final db = await _dbHelper.database;
 
-    // If a specific book is requested (and isn't 'ALL'), filter by it
+    String sql = "SELECT * FROM bible WHERE content LIKE ?";
+    List<dynamic> args = ['%$query%'];
+
     if (bookId != null && bookId != 'ALL') {
-      // API.Bible uses the 'range' parameter for specific books
-      url += "&range=$bookId";
+      sql += " AND book = ?";
+      args.add(bookId);
     }
 
-    print("🔎 Searching: $url");
+    sql += " LIMIT 50";
 
-    final response = await http.get(Uri.parse(url), headers: _headers);
+    final List<Map<String, dynamic>> results = await db.rawQuery(sql, args);
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+    return results.map((row) {
+      String rawContent = row['content'].toString();
+      String cleanText = rawContent.replaceAll(RegExp(r'<[^>]*>'), '');
 
-      // Safety check: ensure 'verses' exists
-      if (data['data'] != null && data['data']['verses'] != null) {
-        return List<Map<String, dynamic>>.from(data['data']['verses']);
-      }
-      return [];
-    } else {
-      print("❌ Search Failed: ${response.body}");
-      throw Exception('Search failed');
-    }
+      final niceBookName = _bibleBooks[row['book']] ?? row['book'];
+
+      return {
+        'chapterId': "${row['book']}.${row['chapter']}",
+        'verseNum': row['verse'],
+        'reference': "$niceBookName ${row['chapter']}:${row['verse']}",
+        'text': cleanText,
+      };
+    }).toList();
   }
 }

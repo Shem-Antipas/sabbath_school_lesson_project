@@ -1,4 +1,4 @@
-import 'package:sda_lesson_app/models/lesson.dart';
+import '../models/lesson.dart';
 
 class LessonContent {
   final Lesson? lesson;
@@ -19,10 +19,10 @@ class LessonContent {
     this.index,
   });
 
-  // ADD THIS: Converts LessonContent to a Map for saving
+  // Converts LessonContent to a Map for saving
   Map<String, dynamic> toJson() {
     return {
-      'lesson': lesson?.toJson(), // Note: Your Lesson model also needs toJson()
+      'lesson': lesson?.toJson(), // Relies on Lesson.toJson()
       'days': days?.map((e) => e.toJson()).toList(),
       'id': id,
       'title': title,
@@ -71,7 +71,7 @@ class Day {
     required this.bible,
   });
 
-  // ADD THIS: Converts Day to a Map
+  // Converts Day to a Map
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -103,7 +103,7 @@ class BibleVerse {
 
   BibleVerse({required this.name, required this.content});
 
-  // ADD THIS: Converts BibleVerse to a Map
+  // Converts BibleVerse to a Map
   Map<String, dynamic> toJson() {
     return {'name': name, 'content': content};
   }

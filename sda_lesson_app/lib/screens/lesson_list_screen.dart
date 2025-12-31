@@ -26,39 +26,44 @@ class LessonListScreen extends ConsumerWidget {
       body: Center(
         // Centers the entire grid on wide screens
         child: Container(
-          constraints: const BoxConstraints(
-            maxWidth: 1200,
-          ), // Standard web container width
-          padding: const EdgeInsets.symmetric(
-            horizontal: 24,
-          ), // Breathing room from page edges
+          constraints: const BoxConstraints(maxWidth: 1200),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
           child: asyncLessons.when(
             data: (lessons) {
+              // Fallback image if a specific lesson has no cover
               final String rawQuarterlyCover =
                   "https://sabbath-school.adventech.io/api/v1/en/quarterlies/$quarterlyId/cover.png";
 
               return GridView.builder(
                 padding: const EdgeInsets.symmetric(vertical: 30),
-                // This makes the grid responsive (auto-adjusts columns based on width)
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 280, // Target width for each tile
+                  maxCrossAxisExtent: 280,
                   crossAxisSpacing: 20,
                   mainAxisSpacing: 20,
-                  childAspectRatio: 0.7, // Portrait book cover ratio
+                  childAspectRatio: 0.7,
                 ),
                 itemCount: lessons.length,
                 itemBuilder: (context, index) {
                   final lesson = lessons[index];
 
-                  // --- YOUR PROXY LOGIC ---
-                  final String imageUrl = lesson.cover ?? rawQuarterlyCover;
-                  final String proxiedImageUrl =
-                      "http://127.0.0.1:8787/proxy-image?url=${Uri.encodeComponent(imageUrl)}";
+                  // --- FIX: REMOVE PROXY, USE DIRECT URL ---
+                  // If lesson.cover exists, check if it's full URL. If not, construct it.
+                  String imageUrl = lesson.cover ?? rawQuarterlyCover;
+
+                  if (!imageUrl.startsWith('http')) {
+                    // Construct full URL if it's a relative path
+                    imageUrl =
+                        "https://sabbath-school.adventech.io/api/v1/en/quarterlies/$quarterlyId/lessons/${lesson.id}/cover.png";
+                    // Note: If the API doesn't provide lesson-specific covers,
+                    // it often defaults to the quarterly cover.
+                    // A safer fallback if specific covers fail is simply:
+                    // imageUrl = rawQuarterlyCover;
+                  }
 
                   return _buildLessonCard(
                     context,
                     lesson,
-                    proxiedImageUrl,
+                    imageUrl, // Pass the fixed URL here
                     index,
                   );
                 },
@@ -76,7 +81,7 @@ class LessonListScreen extends ConsumerWidget {
   Widget _buildLessonCard(
     BuildContext context,
     dynamic lesson,
-    String proxiedImageUrl,
+    String imageUrl,
     int index,
   ) {
     return InkWell(
@@ -87,7 +92,6 @@ class LessonListScreen extends ConsumerWidget {
             ? quarterlyId.split('/').last
             : quarterlyId;
 
-        // Matches the structure required by your fetch logic
         String finalIndex = "en/$cleanQId/$lessonId/01";
 
         Navigator.push(
@@ -115,10 +119,10 @@ class LessonListScreen extends ConsumerWidget {
           borderRadius: BorderRadius.circular(12),
           child: Stack(
             children: [
-              // Background Image via Proxy
+              // Background Image
               Positioned.fill(
                 child: Image.network(
-                  proxiedImageUrl,
+                  imageUrl, // Using the direct URL now
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) => Container(
                     color: Colors.blueGrey[900],

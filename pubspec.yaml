@@ -19,6 +19,11 @@ dependencies:
   html: ^0.15.4 # To parse Bible HTML into clean verses
   flutter_tts: ^3.8.3 # For reading aloud
   shared_preferences: ^2.2.0 # For storing user settings
+  flutter_launcher_icons: ^0.13.1
+  scrollable_positioned_list: ^0.3.8 # For scrolling to specific verses
+  url_launcher: ^6.1.11
+  sqflite: ^2.2.0+3
+  audioplayers: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -31,3 +36,13 @@ flutter:
   uses-material-design: true
   assets:
     - assets/hymns.json
+    - assets/images/
+    - assets/bible.db
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon.png"
+  min_sdk_android: 21 # optional
+  adaptive_icon_background: "#ffffff" # optional (for Android adaptive icons)
+  adaptive_icon_foreground: "assets/icon.png" # optional

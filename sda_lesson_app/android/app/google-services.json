@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "118513129084",
+    "project_id": "adventist-study-hub",
+    "storage_bucket": "adventist-study-hub.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:118513129084:android:a0302a9898ea8a22cedbf9",
+        "android_client_info": {
+          "package_name": "adventist.study.hub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDP68xqTsMUK8sewpz8_Z7d0E9qPxgwIpw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

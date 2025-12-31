@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sda_lesson_app/models/lesson.dart';
-import 'package:sda_lesson_app/services/api_service.dart';
-import 'package:sda_lesson_app/models/quarterly.dart';
-import 'package:sda_lesson_app/models/lesson_content.dart' as reader;
+import '../services/api_service.dart';
+import '../models/quarterly.dart';
+import '../models/lesson_content.dart' as reader;
+import '../models/lesson.dart';
 
 // --- API SERVICE ---
 final apiProvider = Provider((ref) => ApiService());
