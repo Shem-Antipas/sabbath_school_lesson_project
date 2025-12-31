@@ -5,15 +5,15 @@ class BibleApiService {
   final _dbHelper = BibleDatabaseHelper();
 
   // --- 1. UPDATED MAPPING ---
-  // Keys now match the specific abbreviations in your DB (e.g. '1John', 'Mark')
+  // Keys now match the specific abbreviations in your DB (e.g. 'Josh', '1Thess')
   static const Map<String, String> _bibleBooks = {
-    // Old Testament (These matched your previous request)
+    // Old Testament
     'Gen': 'Genesis',
     'Exod': 'Exodus',
     'Lev': 'Leviticus',
     'Num': 'Numbers',
     'Deut': 'Deuteronomy',
-    'Jos': 'Joshua',
+    'Josh': 'Joshua', // CHANGED from 'Jos' to 'Josh' (per screenshot)
     'Judg': 'Judges',
     'Ruth': 'Ruth',
     '1Sam': '1 Samuel',
@@ -39,7 +39,7 @@ class BibleApiService {
     'Joel': 'Joel',
     'Amos': 'Amos',
     'Obad': 'Obadiah',
-    'Jon': 'Jonah',
+    'Jonah': 'Jonah', // CHANGED from 'Jon' to 'Jonah' (per screenshot)
     'Mic': 'Micah',
     'Nah': 'Nahum',
     'Hab': 'Habakkuk',
@@ -48,11 +48,11 @@ class BibleApiService {
     'Zech': 'Zechariah',
     'Mal': 'Malachi',
 
-    // New Testament (UPDATED KEYS TO FIX SORTING)
+    // New Testament
     'Matt': 'Matthew',
-    'Mark': 'Mark', // Changed from 'Mar'
-    'Luke': 'Luke', // Changed from 'Luk'
-    'John': 'John', // Changed from 'Joh'
+    'Mark': 'Mark',
+    'Luke': 'Luke',
+    'John': 'John',
     'Acts': 'Acts',
     'Rom': 'Romans',
     '1Cor': '1 Corinthians',
@@ -61,20 +61,21 @@ class BibleApiService {
     'Eph': 'Ephesians',
     'Phil': 'Philippians',
     'Col': 'Colossians',
-    '1Thes': '1 Thessalonians', // Changed from '1Thess' to match DB ID
-    '2Thes': '2 Thessalonians', // Changed from '2Thess'
+    '1Thess':
+        '1 Thessalonians', // CHANGED from '1Thes' to '1Thess' (per screenshot)
+    '2Thess': '2 Thessalonians', // CHANGED from '2Thes' to '2Thess'
     '1Tim': '1 Timothy',
     '2Tim': '2 Timothy',
-    'Tit': 'Titus',
+    'Titus': 'Titus',
     'Phlm': 'Philemon',
     'Heb': 'Hebrews',
     'Jas': 'James',
     '1Pet': '1 Peter',
     '2Pet': '2 Peter',
-    '1John': '1 John', // Changed from '1Jn' to match DB ID
-    '2John': '2 John', // Changed from '2Jn'
-    '3John': '3 John', // Changed from '3Jn'
-    'Jud': 'Jude',
+    '1John': '1 John',
+    '2John': '2 John',
+    '3John': '3 John',
+    'Jude': 'Jude', // CHANGED from 'Jud' to 'Jude' (likely matches DB)
     'Rev': 'Revelation',
   };
 
@@ -109,6 +110,7 @@ class BibleApiService {
     });
 
     // Add any remaining books (fallback for mismatched keys)
+    // If you see books at the bottom of the list, their keys are falling here.
     for (var remainingKey in dbBookKeys) {
       sortedList.add({
         'id': remainingKey,

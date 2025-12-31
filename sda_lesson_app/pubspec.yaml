@@ -35,6 +35,7 @@ dev_dependencies:
   flutter_lints: ^3.0.0
   build_runner: ^2.4.8
   json_serializable: ^6.7.1
+  flutter_native_splash: ^2.3.10
 
 flutter:
   uses-material-design: true
@@ -43,7 +44,7 @@ flutter:
     - assets/hymns.json
     - assets/images/
     - assets/bible.db
-
+    - assets/branding.png
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
@@ -51,3 +52,19 @@ flutter_launcher_icons:
   min_sdk_android: 21 # optional
   adaptive_icon_background: "#ffffff" # optional (for Android adaptive icons)
   adaptive_icon_foreground: "assets/icon.png" # optional
+
+flutter_native_splash:
+  color: "#06275C" # Blue background color
+  image: "assets/logo.png" # Using your app icon as the center logo
+
+  # Optional: Different look for Dark Mode
+  color_dark: "#06275C"
+  image_dark: "assets/logo.png"
+
+  # Android 12+ specific settings
+  android_12:
+    image: "assets/logo.png"
+    icon_background_color: "#06275C"
+
+  android: true
+  ios: true

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/data_providers.dart';
 import 'lesson_list_screen.dart';
+import 'package:sda_lesson_app/widgets/connection_error_card.dart'; // 1. Add Import
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -172,9 +173,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 },
               );
             },
-            error: (err, stack) => Center(
-              child: Text('Error: $err', style: TextStyle(color: titleColor)),
+
+            // 2. UPDATED ERROR LOGIC
+            // Use the "Classy" Card because this is a full screen view
+            error: (err, stack) => ConnectionErrorCard(
+              onRetry: () {
+                ref.refresh(quarterlyListProvider);
+              },
             ),
+
             loading: () => const Center(child: CircularProgressIndicator()),
           ),
         ),
