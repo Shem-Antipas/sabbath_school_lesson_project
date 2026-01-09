@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
 import 'bible_reader_screen.dart';
 import 'bible_chapter_screen.dart'; // Required for navigation fix
-import 'bible_verse_screen.dart';
 
 class BibleScreen extends ConsumerStatefulWidget {
   const BibleScreen({super.key});
@@ -78,7 +77,7 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
     final backgroundColor = isDark
         ? const Color(0xFF121212)
         : const Color(0xFFF7F4F2);
-    final activeColor = const Color(0xFF7D2D3B);
+    const activeColor = Color(0xFF7D2D3B);
     final Color inactiveColor = isDark
         ? (Colors.grey[800] ?? Colors.grey)
         : (Colors.grey[300] ?? Colors.grey);
@@ -347,12 +346,12 @@ class BibleSearchDelegate extends SearchDelegate {
 
   @override
   Widget buildSuggestions(BuildContext context) {
-    return Column(
+    return const Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(Icons.menu_book, size: 60, color: Colors.grey),
-        const SizedBox(height: 10),
-        const Text("Search for keywords like 'Grace', 'Sabbath', 'Love'"),
+        Icon(Icons.menu_book, size: 60, color: Colors.grey),
+        SizedBox(height: 10),
+        Text("Search for keywords like 'Grace', 'Sabbath', 'Love'"),
       ],
     );
   }

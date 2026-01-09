@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/data_providers.dart';
 import 'lesson_list_screen.dart';
-import 'package:sda_lesson_app/widgets/connection_error_card.dart'; // 1. Add Import
+import 'package:sda_lesson_app/widgets/connection_error_card.dart'; 
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -35,16 +35,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         : Colors.black.withOpacity(0.2);
 
     return Scaffold(
-      backgroundColor: backgroundColor, // Dynamic Background
+      backgroundColor: backgroundColor, 
       appBar: AppBar(
+        // --- REMOVED: No Leading Icon (Back Button) ---
+        // This is now a top-level tab, so no back button is needed.
         title: Text(
           "Sabbath School",
-          style: TextStyle(color: titleColor), // Dynamic Title
+          style: TextStyle(color: titleColor), 
         ),
         centerTitle: true,
         elevation: 0,
-        backgroundColor: appBarColor, // Dynamic AppBar
-        iconTheme: IconThemeData(color: titleColor), // Back arrow color
+        backgroundColor: appBarColor, 
+        iconTheme: IconThemeData(color: titleColor),
+        automaticallyImplyLeading: false, // Ensures no automatic back button appears
       ),
       body: Center(
         child: Container(
@@ -73,6 +76,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: () {
+                        // Keep PUSH here because LessonListScreen is a sub-page
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -101,7 +105,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     BoxShadow(
                                       color: isHovered
                                           ? hoverShadowColor
-                                          : shadowColor, // Dynamic Shadow
+                                          : shadowColor, 
                                       blurRadius: isHovered ? 20 : 10,
                                       offset: const Offset(0, 8),
                                     ),
@@ -150,7 +154,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   fontSize: 17,
                                   color: isHovered
                                       ? Colors.blueAccent
-                                      : titleColor, // Dynamic Title Color
+                                      : titleColor, 
                                   height: 1.2,
                                 ),
                               ),
@@ -160,7 +164,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               child: Text(
                                 item.humanDate,
                                 style: TextStyle(
-                                  color: subtitleColor, // Dynamic Date Color
+                                  color: subtitleColor, 
                                   fontSize: 13,
                                 ),
                               ),
@@ -175,7 +179,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             },
 
             // 2. UPDATED ERROR LOGIC
-            // Use the "Classy" Card because this is a full screen view
             error: (err, stack) => ConnectionErrorCard(
               onRetry: () {
                 ref.refresh(quarterlyListProvider);

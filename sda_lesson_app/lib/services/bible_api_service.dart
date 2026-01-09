@@ -1,4 +1,3 @@
-import 'package:sqflite/sqflite.dart';
 import 'bible_database_helper.dart';
 
 class BibleApiService {

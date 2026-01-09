@@ -217,16 +217,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 ],
               ),
-              child: Column(
+              child: const Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.wb_twilight,
                     color: Color(0xFFDAA520),
                     size: 50,
                   ),
-                  const SizedBox(height: 15),
-                  const Text(
+                  SizedBox(height: 15),
+                  Text(
                     "Happy Sabbath!",
                     style: TextStyle(
                       color: Color(0xFF06275C),
@@ -235,8 +235,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       fontFamily: 'Serif', // Adds a classic feel
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  const Text(
+                  SizedBox(height: 10),
+                  Text(
                     "Remember the Sabbath day, to keep it holy. May you find rest and peace in His presence.",
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -245,8 +245,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       height: 1.4,
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  const Text(
+                  SizedBox(height: 20),
+                  Text(
                     "Exodus 20:8",
                     style: TextStyle(
                       color: Colors.grey,

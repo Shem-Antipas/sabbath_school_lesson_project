@@ -1,0 +1,30 @@
+[
+  {
+    "id": "sc",
+    "title": "Steps to Christ",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/sc_cover.png",
+    "file_path": "assets/data/sc.json"
+  },
+  {
+    "id": "da",
+    "title": "The Desire of Ages",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/da_cover.png",
+    "file_path": "assets/data/da.json"
+  },
+  {
+    "id": "gc",
+    "title": "The Great Controversy",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/gc_cover.png",
+    "file_path": "assets/data/gc.json"
+  },
+  {
+    "id": "pp",
+    "title": "Patriarchs and Prophets",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/pp_cover.png",
+    "file_path": "assets/data/pp.json"
+  }
+]

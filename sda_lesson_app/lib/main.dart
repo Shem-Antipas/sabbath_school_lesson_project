@@ -17,7 +17,7 @@ class MyApp extends ConsumerWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Sabbath School Lesson App',
+      title: 'Advent Study Hub',
 
       // LIGHT THEME (Your existing styles)
       theme: ThemeData(

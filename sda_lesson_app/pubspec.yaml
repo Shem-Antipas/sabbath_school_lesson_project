@@ -21,7 +21,7 @@ dependencies:
   audioplayers: ^6.0.0
   html: ^0.15.4 # To parse Bible HTML into clean verses
   flutter_tts: ^3.8.3 # For reading aloud
-  shared_preferences: ^2.2.0 # For storing user settings
+  shared_preferences: ^2.2.2 # For storing user settings
   flutter_launcher_icons: ^0.13.1
   scrollable_positioned_list: ^0.3.8 # For scrolling to specific verses
   url_launcher: ^6.1.11
@@ -45,6 +45,7 @@ flutter:
     - assets/images/
     - assets/bible.db
     - assets/branding.png
+    - assets/data/
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true

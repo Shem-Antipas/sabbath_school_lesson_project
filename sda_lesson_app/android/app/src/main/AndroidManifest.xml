@@ -1,6 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="adventist.study.hub">
     <application
-        android:label="Adventist Study Hub"
+        android:label="Advent Study Hub"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

@@ -157,7 +157,7 @@ class HymnalScreen extends ConsumerWidget {
     final backgroundColor = isDark
         ? const Color(0xFF121212)
         : const Color(0xFFF7F4F2);
-    final appBarColor = const Color(0xFF7D2D3B);
+    const appBarColor = Color(0xFF7D2D3B);
 
     return Scaffold(
       backgroundColor: backgroundColor,

@@ -57,3 +57,4 @@ final lessonContentProvider = FutureProvider.autoDispose
         );
       }
     });
+    final navIndexProvider = StateProvider<int>((ref) => 0);
