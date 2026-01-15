@@ -31,6 +31,7 @@ dependencies:
   firebase_auth: ^4.16.0
   google_sign_in: ^6.1.6
   flutter_secure_storage: ^9.0.0
+  
 
   # You can remove flutter_markdown as it isn't needed for this API
 
