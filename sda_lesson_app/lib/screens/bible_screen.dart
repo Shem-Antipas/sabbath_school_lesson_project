@@ -5,7 +5,17 @@ import 'bible_reader_screen.dart';
 import 'bible_chapter_screen.dart'; // Required for navigation fix
 
 class BibleScreen extends ConsumerStatefulWidget {
-  const BibleScreen({super.key});
+  // NEW: Optional parameters for Deep Linking (e.g., from Daily Verse)
+  final String? initialBook;
+  final int? initialChapter;
+  final int? targetVerse;
+
+  const BibleScreen({
+    super.key,
+    this.initialBook,
+    this.initialChapter,
+    this.targetVerse,
+  });
 
   @override
   ConsumerState<BibleScreen> createState() => _BibleScreenState();
@@ -22,45 +32,11 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
   // Using this Set ensures we filter accurately even if books are missing from the DB.
   // The IDs match the keys in your BibleApiService.
   static const Set<String> _otBookIds = {
-    'Gen',
-    'Exod',
-    'Lev',
-    'Num',
-    'Deut',
-    'Josh',
-    'Judg',
-    'Ruth',
-    '1Sam',
-    '2Sam',
-    '1Kgs',
-    '2Kgs',
-    '1Chr',
-    '2Chr',
-    'Ezra',
-    'Neh',
-    'Esth',
-    'Job',
-    'Ps',
-    'Prov',
-    'Eccl',
-    'Song',
-    'Isa',
-    'Jer',
-    'Lam',
-    'Ezek',
-    'Dan',
-    'Hos',
-    'Joel',
-    'Amos',
-    'Obad',
-    'Jonah',
-    'Mic',
-    'Nah',
-    'Hab',
-    'Zeph',
-    'Hag',
-    'Zech',
-    'Mal',
+    'Gen', 'Exod', 'Lev', 'Num', 'Deut', 'Josh', 'Judg', 'Ruth',
+    '1Sam', '2Sam', '1Kgs', '2Kgs', '1Chr', '2Chr', 'Ezra', 'Neh', 'Esth',
+    'Job', 'Ps', 'Prov', 'Eccl', 'Song', 'Isa', 'Jer', 'Lam', 'Ezek',
+    'Dan', 'Hos', 'Joel', 'Amos', 'Obad', 'Jonah', 'Mic', 'Nah', 'Hab',
+    'Zeph', 'Hag', 'Zech', 'Mal',
   };
 
   @override
@@ -68,6 +44,49 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
     super.initState();
     // fetchBooks already returns them in Chronological Order (Gen -> Rev)
     _booksFuture = _apiService.fetchBooks();
+
+    // NEW: Check for Deep Link Navigation immediately
+    if (widget.initialBook != null && widget.initialChapter != null) {
+      _handleDeepLink();
+    }
+  }
+
+  // --- NEW: Handle automatic navigation to a verse ---
+  Future<void> _handleDeepLink() async {
+    // Wait slightly for UI to settle
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    try {
+      // Re-fetch books to resolve the Book Name (e.g. "Genesis") to ID (e.g. "Gen")
+      final books = await _apiService.fetchBooks();
+      
+      final targetBook = books.firstWhere(
+        (b) => b['name'].toString().toLowerCase() == widget.initialBook!.toLowerCase(),
+        orElse: () => {},
+      );
+
+      if (targetBook.isNotEmpty) {
+        String bookId = targetBook['id'];
+        // Construct Chapter ID (e.g., "Gen.1")
+        String chapterId = "$bookId.${widget.initialChapter}";
+
+        if (mounted) {
+          // Navigate directly to Reader
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BibleReaderScreen(
+                chapterId: chapterId,
+                reference: "${widget.initialBook} ${widget.initialChapter}",
+                targetVerse: widget.targetVerse, // Highlight this verse
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Deep Link Error: $e");
+    }
   }
 
   @override
@@ -148,17 +167,16 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
                 List<Map<String, dynamic>> displayedBooks = [];
 
                 // --- ROBUST FILTERING LOGIC ---
-                // We use .where() which preserves the original chronological order
                 if (_selectedFilterIndex == 0) {
                   // ALL
                   displayedBooks = allBooks;
                 } else if (_selectedFilterIndex == 1) {
-                  // OT: Check if ID is in our OT List
+                  // OT
                   displayedBooks = allBooks
                       .where((b) => _otBookIds.contains(b['id']))
                       .toList();
                 } else {
-                  // NT: Check if ID is NOT in our OT List
+                  // NT
                   displayedBooks = allBooks
                       .where((b) => !_otBookIds.contains(b['id']))
                       .toList();
@@ -189,8 +207,7 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
                         child: Text(
                           book['abbreviation'] ?? "Bk",
                           style: TextStyle(
-                            fontSize:
-                                10, // Slightly smaller font for long abbreviations
+                            fontSize: 10,
                             color: isDark
                                 ? Colors.white
                                 : const Color(0xFF1A237E),

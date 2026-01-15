@@ -64,16 +64,13 @@ class _EGWLibraryScreenState extends ConsumerState<EGWLibraryScreen> {
     double width = MediaQuery.of(context).size.width;
     int columnCount = width > 900 ? 4 : (width > 600 ? 3 : 2);
 
-    // --- FIX: INTERCEPT BACK BUTTON ---
     return WillPopScope(
       onWillPop: () async {
-        // If "Favorites" is open, the Back Button should just close Favorites
-        // instead of closing the whole screen.
         if (showOnlyFavorites) {
           ref.read(showFavoritesOnlyProvider.notifier).state = false;
-          return false; // Prevent the app from exiting this screen
+          return false; 
         }
-        return true; // Otherwise, let the app go back to the Dashboard
+        return true; 
       },
       child: Scaffold(
         appBar: AppBar(
@@ -82,20 +79,16 @@ class _EGWLibraryScreenState extends ConsumerState<EGWLibraryScreen> {
           backgroundColor: isDark ? null : const Color(0xFF06275C),
           foregroundColor: isDark ? null : Colors.white,
           
-          // --- FIX: CUSTOM BACK BUTTON FOR FAVORITES ---
           leading: showOnlyFavorites
               ? IconButton(
                   icon: const Icon(Icons.arrow_back),
                   onPressed: () {
-                    // Turn off favorites mode
                     ref.read(showFavoritesOnlyProvider.notifier).state = false;
                   },
                 )
-              : null, // If null, Flutter uses the default back button (to Dashboard)
+              : null, 
           
           actions: [
-            // If viewing favorites, hide the bookmark filter button to avoid confusion, 
-            // or keep it to toggle off. Keeping it is fine.
             IconButton(
               icon: Icon(showOnlyFavorites ? Icons.bookmark : Icons.bookmark_border),
               tooltip: "Filter Favorites",
@@ -136,7 +129,7 @@ class _EGWLibraryScreenState extends ConsumerState<EGWLibraryScreen> {
                         padding: const EdgeInsets.all(16),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: columnCount,
-                          childAspectRatio: 0.7, // TALLER CARDS FOR BOOKS
+                          childAspectRatio: 0.7, 
                           crossAxisSpacing: 15,
                           mainAxisSpacing: 15,
                         ),
@@ -301,9 +294,11 @@ class EGWSearchDelegate extends SearchDelegate {
           itemBuilder: (context, index) {
             final result = results[index];
             final BookMeta book = result['book'];
-            final int chapterIndex = result['chapterIndex'];
             final String chapterTitle = result['chapterTitle'];
             final String snippet = result['snippet'];
+            
+            // KEY FIX: Use the calculated paragraph index (initialIndex)
+            final int exactIndex = result['initialIndex'];
 
             return ListTile(
               leading: Image.asset(book.coverImage, width: 30, fit: BoxFit.cover),
@@ -317,14 +312,13 @@ class EGWSearchDelegate extends SearchDelegate {
               ),
               isThreeLine: true,
               onTap: () {
-                // FIX: We DO NOT call close(context, null) here.
-                // This keeps the search results in the history stack.
+                // Pass exact index for correct scrolling
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => EGWBookDetailScreen(
                       bookMeta: book,
-                      initialChapterIndex: chapterIndex,
+                      initialIndex: exactIndex, 
                       searchQuery: query,
                     ),
                   ),
@@ -382,6 +376,40 @@ class EGWSearchDelegate extends SearchDelegate {
     );
   }
 
+  // --- HELPER: Parse HTML to simulate detail screen logic ---
+  Map<String, dynamic> _parseHtmlContent(String rawHtml) {
+    String processed = rawHtml
+        .replaceAll('<br>', '\n')
+        .replaceAll('<br/>', '\n')
+        .replaceAll(RegExp(r'\n\s*\n'), '\n\n'); 
+
+    List<RangeStyle> boldRanges = [];
+    StringBuffer cleanBuffer = StringBuffer();
+    RegExp boldExp = RegExp(r'<b>(.*?)</b>', dotAll: true);
+    
+    String remaining = processed;
+    while(remaining.isNotEmpty) {
+      Match? match = boldExp.firstMatch(remaining);
+      if (match != null) {
+        cleanBuffer.write(remaining.substring(0, match.start));
+        int start = cleanBuffer.length;
+        cleanBuffer.write(match.group(1) ?? "");
+        int end = cleanBuffer.length;
+        boldRanges.add(RangeStyle(start: start, end: end, isBold: true));
+        remaining = remaining.substring(match.end);
+      } else {
+        cleanBuffer.write(remaining);
+        break;
+      }
+    }
+
+    return {
+      'text': cleanBuffer.toString(),
+      'boldRanges': boldRanges,
+    };
+  }
+
+  // --- UPDATED SEARCH LOGIC: MATCHES DETAIL SCREEN SPLITTING ---
   Future<List<Map<String, dynamic>>> _searchAllBooks(BuildContext context, String query) async {
     List<Map<String, dynamic>> searchResults = [];
     String lowerQuery = query.toLowerCase();
@@ -392,22 +420,93 @@ class EGWSearchDelegate extends SearchDelegate {
         final Map<String, dynamic> data = json.decode(response);
         final List<dynamic> chapters = data['chapters'];
 
+        // KEY: Must track items exactly as EGWBookDetailScreen does
+        int globalItemIndex = 0; 
+
         for (int i = 0; i < chapters.length; i++) {
-          String content = chapters[i]['content'] ?? "";
+          String rawContent = chapters[i]['content'] ?? "";
           String title = chapters[i]['title'] ?? "";
 
-          if (content.toLowerCase().contains(lowerQuery)) {
-            int matchIndex = content.toLowerCase().indexOf(lowerQuery);
-            int start = (matchIndex - 20).clamp(0, content.length);
-            int end = (matchIndex + 60).clamp(0, content.length);
-            String snippet = "...${content.substring(start, end).replaceAll('\n', ' ')}...";
+          // 1. Header (1 item)
+          globalItemIndex++;
 
-            searchResults.add({
-              'book': book,
-              'chapterIndex': i,
-              'chapterTitle': title,
-              'snippet': snippet,
-            });
+          // 2. Parse Content
+          var parsed = _parseHtmlContent(rawContent);
+          String fullCleanText = parsed['text'];
+          List<RangeStyle> fullBoldRanges = parsed['boldRanges'];
+
+          // 3. Split Paragraphs (Double Newline)
+          List<String> hardParagraphs = fullCleanText.split('\n\n');
+          int currentGlobalOffset = 0;
+
+          for (String paragraph in hardParagraphs) {
+            if (paragraph.trim().isEmpty) {
+              currentGlobalOffset += paragraph.length + 2; 
+              continue;
+            }
+
+            int chunkStart = currentGlobalOffset;
+            int chunkEnd = chunkStart + paragraph.length;
+
+            // 4. Split by Bold Ranges
+            List<int> splitPoints = [];
+            for (var r in fullBoldRanges) {
+              if (r.start > chunkStart && r.start < chunkEnd) {
+                splitPoints.add(r.start - chunkStart);
+              }
+            }
+            splitPoints.sort();
+
+            List<String> boldSplitChunks = [];
+            int previousSplit = 0;
+            for (int point in splitPoints) {
+              boldSplitChunks.add(paragraph.substring(previousSplit, point).trim());
+              previousSplit = point;
+            }
+            boldSplitChunks.add(paragraph.substring(previousSplit).trim());
+
+            // 5. Split by Sentence Count (8-sentence rule)
+            for (String chunk in boldSplitChunks) {
+              if (chunk.isEmpty) continue;
+
+              RegExp sentenceSplit = RegExp(r'(?<=[.?!])\s+');
+              List<String> sentences = chunk.split(sentenceSplit);
+              
+              if (sentences.length <= 8) {
+                // This is a BookItem. Check it for search term.
+                if (chunk.toLowerCase().contains(lowerQuery)) {
+                  _addResult(searchResults, chunk, globalItemIndex, title, book, lowerQuery, i);
+                }
+                globalItemIndex++;
+              } else {
+                // Chop longer paragraphs
+                StringBuffer buffer = StringBuffer();
+                int sentenceCount = 0;
+                for (String s in sentences) {
+                   buffer.write(s.trim());
+                   buffer.write(" "); 
+                   sentenceCount++;
+                   
+                   if (sentenceCount >= 8 || buffer.length > 800) {
+                     String subChunk = buffer.toString().trim();
+                     if (subChunk.toLowerCase().contains(lowerQuery)) {
+                        _addResult(searchResults, subChunk, globalItemIndex, title, book, lowerQuery, i);
+                     }
+                     globalItemIndex++;
+                     buffer.clear();
+                     sentenceCount = 0;
+                   }
+                }
+                if (buffer.isNotEmpty) {
+                  String subChunk = buffer.toString().trim();
+                  if (subChunk.toLowerCase().contains(lowerQuery)) {
+                     _addResult(searchResults, subChunk, globalItemIndex, title, book, lowerQuery, i);
+                  }
+                  globalItemIndex++;
+                }
+              }
+            }
+            currentGlobalOffset += paragraph.length + 2; 
           }
         }
       } catch (e) {
@@ -416,4 +515,37 @@ class EGWSearchDelegate extends SearchDelegate {
     }
     return searchResults;
   }
+
+  void _addResult(
+    List<Map<String, dynamic>> results, 
+    String text, 
+    int index, 
+    String title, 
+    BookMeta book, 
+    String lowerQuery,
+    int chapterIndex
+  ) {
+    int matchIndex = text.toLowerCase().indexOf(lowerQuery);
+    if (matchIndex == -1) return; // Should catch by caller, but safety check
+
+    int start = (matchIndex - 20).clamp(0, text.length);
+    int end = (matchIndex + 60).clamp(0, text.length);
+    String snippet = "...${text.substring(start, end).replaceAll('\n', ' ')}...";
+
+    results.add({
+      'book': book,
+      'initialIndex': index, // EXACT TARGET
+      'chapterTitle': title,
+      'snippet': snippet,
+      'chapterIndex': chapterIndex, 
+    });
+  }
+}
+
+// Minimal class to support logic in this file
+class RangeStyle {
+  final int start;
+  final int end;
+  final bool isBold;
+  RangeStyle({required this.start, required this.end, this.isBold = false});
 }

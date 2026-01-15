@@ -26,6 +26,11 @@ dependencies:
   scrollable_positioned_list: ^0.3.8 # For scrolling to specific verses
   url_launcher: ^6.1.11
   sqflite: ^2.2.0+3
+  font_awesome_flutter: ^10.12.0
+  firebase_core: ^2.24.2
+  firebase_auth: ^4.16.0
+  google_sign_in: ^6.1.6
+  flutter_secure_storage: ^9.0.0
 
   # You can remove flutter_markdown as it isn't needed for this API
 

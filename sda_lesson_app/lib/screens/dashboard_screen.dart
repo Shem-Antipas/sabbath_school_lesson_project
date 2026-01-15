@@ -1,15 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Required for Auth check
+
+// --- SERVICES & PROVIDERS ---
 import '../services/daily_verse_service.dart';
 import '../services/greeting_service.dart';
 import '../providers/data_providers.dart';
+
+// --- SCREENS ---
 import 'hymnal_screen.dart';
 import 'settings_screen.dart';
 import 'bible_screen.dart';
 import 'egw_library_screen.dart';
 import 'home_screen.dart';
 import 'lesson_list_screen.dart';
+import 'login_screen.dart';   // Ensure this file exists and class is named LoginScreen
+import 'profile_screen.dart'; // Ensure this file exists and class is named ProfileScreen
+
+// --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
 import 'package:sda_lesson_app/widgets/greeting_cards.dart';
 
@@ -25,10 +34,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Check New Year First
       await _checkAndShowNewYearPopup();
-
-      // Check Sabbath Logic immediately after (if mounted)
       if (mounted) {
         await _checkAndShowSabbathPopup();
       }
@@ -42,7 +48,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
 
-    // Only run this check in January (Optional optimization)
     if (now.month != 1) return;
 
     const String lastOpenDateKey = 'last_open_date';
@@ -134,15 +139,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   Future<void> _checkAndShowSabbathPopup() async {
     final now = DateTime.now();
 
-    // 1. Check if it is currently Sabbath (Fri 6:30 PM - Sat 6:30 PM)
     bool isSabbath = false;
     if (now.weekday == DateTime.friday) {
-      // Friday: After 18:30 (6:30 PM)
       if (now.hour > 18 || (now.hour == 18 && now.minute >= 30)) {
         isSabbath = true;
       }
     } else if (now.weekday == DateTime.saturday) {
-      // Saturday: Before 18:30 (6:30 PM)
       if (now.hour < 18 || (now.hour == 18 && now.minute < 30)) {
         isSabbath = true;
       }
@@ -150,7 +152,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     if (!isSabbath) return;
 
-    // 2. Check Storage for frequency logic
     final prefs = await SharedPreferences.getInstance();
     const String sabbathKey = 'sabbath_last_shown_time';
     final int? lastShownMillis = prefs.getInt(sabbathKey);
@@ -158,7 +159,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     bool shouldShow = false;
 
     if (lastShownMillis == null) {
-      // First time ever opening in a Sabbath window
       shouldShow = true;
     } else {
       final lastShownDate = DateTime.fromMillisecondsSinceEpoch(
@@ -166,14 +166,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       );
       final difference = now.difference(lastShownDate);
 
-      // Show if more than 3 hours have passed since the last popup
       if (difference.inHours >= 3) {
         shouldShow = true;
       }
     }
 
     if (shouldShow && mounted) {
-      // Save the current time as the new "Last Shown"
       await prefs.setInt(sabbathKey, now.millisecondsSinceEpoch);
       _showSabbathDialog();
     }
@@ -182,33 +180,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void _showSabbathDialog() {
     showDialog(
       context: context,
-      barrierDismissible: false, // User must tap Close
+      barrierDismissible: false,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        backgroundColor:
-            Colors.transparent, // Transparent to handle Stack nicely
+        backgroundColor: Colors.transparent,
         child: Stack(
           alignment: Alignment.topRight,
           children: [
-            // THE CARD CONTENT
             Container(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                40,
-                20,
-                20,
-              ), // Top padding for Close button
-              margin: const EdgeInsets.only(
-                top: 15,
-                right: 15,
-              ), // Margin for Close button overlap
+              padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
+              margin: const EdgeInsets.only(top: 15, right: 15),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: const Color(0xFFDAA520),
                   width: 2,
-                ), // Gold border
+                ),
                 boxShadow: const [
                   BoxShadow(
                     color: Colors.black26,
@@ -232,7 +220,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       color: Color(0xFF06275C),
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      fontFamily: 'Serif', // Adds a classic feel
+                      fontFamily: 'Serif',
                     ),
                   ),
                   SizedBox(height: 10),
@@ -257,8 +245,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ],
               ),
             ),
-
-            // THE CLOSE BUTTON (Top Right)
             Positioned(
               top: 0,
               right: 0,
@@ -267,7 +253,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: const BoxDecoration(
-                    color: Colors.red, // Distinct close button color
+                    color: Colors.red,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(color: Colors.black26, blurRadius: 5),
@@ -307,7 +293,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final iconColor = isDark ? Colors.white : Colors.black87;
     final avatarBg = isDark ? Colors.grey[800] : Colors.grey[200];
 
-    // Check if Sabbath for the INLINE card (optional, you can keep or remove)
     final bool showSabbath = GreetingService.isSabbathTime();
 
     return Scaffold(
@@ -350,9 +335,35 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
               Padding(
                 padding: const EdgeInsets.only(right: 16, top: 20),
-                child: CircleAvatar(
-                  backgroundColor: avatarBg,
-                  child: Icon(Icons.person_outline, color: iconColor),
+                child: InkWell(
+                  // -----------------------------------------------------------
+                  // ✅ UPDATED PROFILE LOGIC
+                  // -----------------------------------------------------------
+                  onTap: () {
+                    final user = FirebaseAuth.instance.currentUser;
+                    if (user != null) {
+                      // If Logged In -> Go to Profile
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ProfileScreen(),
+                        ),
+                      );
+                    } else {
+                      // If Logged Out -> Go to Login
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                      );
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(50),
+                  child: CircleAvatar(
+                    backgroundColor: avatarBg,
+                    child: Icon(Icons.person_outline, color: iconColor),
+                  ),
                 ),
               ),
             ],
@@ -364,8 +375,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // INLINE CARD (Optional: Keep it if you want a permanent banner too)
-                  if (showSabbath) const SabbathCard(),
+                  // Optional Inline Sabbath Card
+                  if (showSabbath) ...[
+                    // const SabbathCard(), 
+                    // const SizedBox(height: 20),
+                  ],
 
                   _buildDailyVerseCard(todayVerse),
 
@@ -421,51 +435,100 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // --- WIDGET HELPERS (Identical to previous versions) ---
+  // --- WIDGET HELPERS ---
 
   Widget _buildDailyVerseCard(DailyVerse verse) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return GestureDetector(
+      onTap: () {
+        final parsed = parseBibleReference(verse.reference);
+        if (parsed != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BibleScreen(
+                initialBook: parsed['book'],
+                initialChapter: parsed['chapter'],
+                targetVerse: parsed['verse'], // Highlight this verse
+              ),
+            ),
+          );
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const BibleScreen()),
+          );
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF2C3E50).withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF2C3E50).withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.format_quote, color: Colors.white54, size: 32),
-          Text(
-            verse.text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              height: 1.4,
-              fontWeight: FontWeight.w500,
-              fontStyle: FontStyle.italic,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Icon(Icons.format_quote, color: Colors.white54, size: 32),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    children: [
+                      Text(
+                        "Read Now",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(Icons.arrow_forward, color: Colors.white, size: 10),
+                    ],
+                  ),
+                )
+              ],
             ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            "- ${verse.reference}",
-            style: const TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
+            const SizedBox(height: 8),
+            Text(
+              verse.text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                height: 1.4,
+                fontWeight: FontWeight.w500,
+                fontStyle: FontStyle.italic,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            Text(
+              "- ${verse.reference}",
+              style: const TextStyle(
+                color: Colors.white70,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -668,6 +731,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Map<String, dynamic>? parseBibleReference(String reference) {
+    try {
+      int lastSpaceIndex = reference.lastIndexOf(' ');
+      if (lastSpaceIndex == -1) return null;
+
+      String book = reference.substring(0, lastSpaceIndex).trim();
+      String location = reference.substring(lastSpaceIndex + 1).trim();
+
+      List<String> parts = location.split(':');
+      if (parts.length != 2) return null;
+
+      return {
+        'book': book,
+        'chapter': int.parse(parts[0]),
+        'verse': int.parse(parts[1]),
+      };
+    } catch (e) {
+      debugPrint("Verse Parse Error: $e");
+      return null;
+    }
   }
 }
 

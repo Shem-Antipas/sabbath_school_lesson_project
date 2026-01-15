@@ -26,5 +26,61 @@
     "author": "Ellen G. White",
     "cover_image": "assets/images/pp_cover.png",
     "file_path": "assets/data/pp.json"
+  },
+  {
+    "id": "aa",
+    "title": "The Acts of the Apostles",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/aa_cover.png",
+    "file_path": "assets/data/aa.json"
+  },
+  {
+    "id": "ah",
+    "title": "The Adventist Home",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/ah_cover.png",
+    "file_path": "assets/data/ah.json"
+  },
+  {
+    "id": "csa",
+    "title": "A Call to Stand Apart",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/csa_cover.png",
+    "file_path": "assets/data/csa.json"
+  },
+  {
+    "id": "cme",
+    "title": "A Call To Medical Evangelism",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cme_cover.png",
+    "file_path": "assets/data/cme.json"
+  },
+  {
+    "id": "cg",
+    "title": "Child Guidance",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cg_cover.png",
+    "file_path": "assets/data/cg.json"
+  },
+  {
+    "id": "ce",
+    "title": "Christian Education",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/ce_cover.png",
+    "file_path": "assets/data/ce.json"
+  },
+  {
+    "id": "cihs",
+    "title": "Christ In His Sanctuary",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cihs_cover.png",
+    "file_path": "assets/data/cihs.json"
+  },
+  {
+    "id": "cet",
+    "title": "Christian Experience and Teachings of Ellen G. White",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cet_cover.jpg",
+    "file_path": "assets/data/cet.json"
   }
 ]
