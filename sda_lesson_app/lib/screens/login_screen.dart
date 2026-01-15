@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'register_screen.dart'; // Import the new screen
+import 'package:google_sign_in/google_sign_in.dart'; // ✅ Required for Google Sign In
+import 'register_screen.dart'; 
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -11,13 +12,68 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _formKey = GlobalKey<FormState>(); // Add form key
+  final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   
   bool _isPasswordVisible = false;
-  bool _isLoading = false; // Add loading state
+  bool _isLoading = false; 
 
+  // ---------------------------------------------------------------------------
+  // GOOGLE SIGN IN LOGIC
+  // ---------------------------------------------------------------------------
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // 1. Trigger the Google Authentication flow
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      
+      if (googleUser == null) {
+        // The user canceled the sign-in
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // 2. Obtain the auth details from the request
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+      // 3. Create a new credential
+      final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // 4. Sign in to Firebase with the credential
+      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Welcome back! Signed in with Google.")),
+        );
+        // Go back to Dashboard
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Google Sign-In Failed: ${e.message}")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // EMAIL LOGIN LOGIC
+  // ---------------------------------------------------------------------------
   Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
@@ -123,7 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: "Continue with Google",
                   color: Colors.red,
                   borderColor: Colors.grey[300]!,
-                  onTap: () => debugPrint("Google Login"),
+                  // ✅ FIX: Now calling the actual Google Sign In method
+                  onTap: _signInWithGoogle,
                 ),
                 const SizedBox(height: 16),
                 _buildSocialButton(
@@ -131,7 +188,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: "Continue with Microsoft",
                   color: const Color(0xFF00A4EF),
                   borderColor: Colors.grey[300]!,
-                  onTap: () => debugPrint("Microsoft Login"),
+                  onTap: () {
+                    // Microsoft logic placeholder
+                    debugPrint("Microsoft Login");
+                  },
                 ),
 
                 const SizedBox(height: 30),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -18,6 +19,58 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isPasswordVisible = false;
   bool _isLoading = false; 
 
+  // --- GOOGLE SIGN IN LOGIC ---
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // 1. Trigger the Google Authentication flow
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      
+      if (googleUser == null) {
+        // The user canceled the sign-in
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      // 2. Obtain the auth details from the request
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+      // 3. Create a new credential
+      final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // 4. Sign in to Firebase with the credential
+      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Signed in with Google successfully!")),
+        );
+        // Go back to previous screen (likely Dashboard or Login)
+        // You might want to pop until the first route to ensure you're back at dashboard
+        Navigator.of(context).popUntil((route) => route.isFirst); 
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Google Sign-In Failed: ${e.message}")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- EMAIL REGISTER LOGIC ---
   Future<void> _handleRegister() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
@@ -32,23 +85,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // 2. Update Display Name with the name provided
         if (credential.user != null) {
           await credential.user!.updateDisplayName(_nameController.text.trim());
-          // Optionally reload the user to ensure local state is updated
           await credential.user!.reload();
         }
 
         if (mounted) {
-          // Show success message
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Account created successfully!"),
               backgroundColor: Colors.green,
             ),
           );
-          // Go back to previous screen (Login or Dashboard depending on flow)
           Navigator.pop(context);
         }
       } on FirebaseAuthException catch (e) {
-        // Handle specific Firebase errors
         String message = "Registration failed";
         if (e.code == 'weak-password') {
           message = 'The password provided is too weak.';
@@ -67,7 +116,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           );
         }
       } catch (e) {
-        // Handle generic errors
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -77,7 +125,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           );
         }
       } finally {
-        // Stop loading spinner regardless of success/failure
         if (mounted) {
           setState(() => _isLoading = false);
         }
@@ -131,10 +178,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   label: "Sign up with Google",
                   color: Colors.red,
                   borderColor: Colors.grey[300]!,
-                  onTap: () {
-                    debugPrint("Google Sign Up");
-                    // Implement Google Sign-In logic here if needed
-                  },
+                  // ✅ FIX: Call the Google Sign-In function here
+                  onTap: _signInWithGoogle, 
                 ),
                 const SizedBox(height: 16),
                 _buildSocialButton(
@@ -144,7 +189,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   borderColor: Colors.grey[300]!,
                   onTap: () {
                     debugPrint("Microsoft Sign Up");
-                    // Implement Microsoft Sign-In logic here if needed
+                    // Implement Microsoft logic here later
                   },
                 ),
 
@@ -162,40 +207,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const SizedBox(height: 30),
 
                 // --- INPUT FIELDS ---
-                // Name Field
                 TextFormField(
                   controller: _nameController,
                   style: TextStyle(color: textColor),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter your name';
-                    return null;
-                  },
+                  validator: (value) => (value == null || value.isEmpty) ? 'Please enter your name' : null,
                   decoration: _inputDecoration("Full Name", Icons.person_outline),
                 ),
                 const SizedBox(height: 16),
                 
-                // Email Field
                 TextFormField(
                   controller: _emailController,
                   style: TextStyle(color: textColor),
                   keyboardType: TextInputType.emailAddress,
-                  validator: (value) {
-                    if (value == null || !value.contains('@')) return 'Enter a valid email';
-                    return null;
-                  },
+                  validator: (value) => (value == null || !value.contains('@')) ? 'Enter a valid email' : null,
                   decoration: _inputDecoration("Email", Icons.email_outlined),
                 ),
                 const SizedBox(height: 16),
                 
-                // Password Field
                 TextFormField(
                   controller: _passwordController,
                   obscureText: !_isPasswordVisible,
                   style: TextStyle(color: textColor),
-                  validator: (value) {
-                    if (value == null || value.length < 6) return 'Password must be at least 6 chars';
-                    return null;
-                  },
+                  validator: (value) => (value == null || value.length < 6) ? 'Password must be at least 6 chars' : null,
                   decoration: InputDecoration(
                     labelText: "Password",
                     labelStyle: TextStyle(color: Colors.grey[600]),
@@ -235,7 +268,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 // --- BACK TO LOGIN ---
                 Center(
                   child: TextButton(
-                    onPressed: () => Navigator.pop(context), // Go back to Login
+                    onPressed: () => Navigator.pop(context),
                     child: RichText(
                       text: TextSpan(
                         text: "Already have an account? ",

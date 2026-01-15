@@ -12,7 +12,12 @@
           "package_name": "adventist.study.hub"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "118513129084-dgq1tnsgthnn8bihmvjq8gb32a166nhu.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDP68xqTsMUK8sewpz8_Z7d0E9qPxgwIpw"
@@ -20,7 +25,49 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "118513129084-dgq1tnsgthnn8bihmvjq8gb32a166nhu.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:118513129084:android:7e9563ab3384e990cedbf9",
+        "android_client_info": {
+          "package_name": "com.example.sda_lesson_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "118513129084-kr2a9luddkigrjnl3b47vhf3d3j1jbjv.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.sda_lesson_app",
+            "certificate_hash": "98e7cd774a956a70742c9140d66503eb39d228bc"
+          }
+        },
+        {
+          "client_id": "118513129084-dgq1tnsgthnn8bihmvjq8gb32a166nhu.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDP68xqTsMUK8sewpz8_Z7d0E9qPxgwIpw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "118513129084-dgq1tnsgthnn8bihmvjq8gb32a166nhu.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
