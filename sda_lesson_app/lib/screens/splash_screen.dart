@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'home_screen.dart'; // Ensure this import points to your actual home screen file
+import 'home_screen.dart'; 
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -15,8 +15,17 @@ class _SplashScreenState extends State<SplashScreen> {
     _navigateToHome();
   }
 
+  // ✅ Pre-load images to prevent "Skipped Frames" lag
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    precacheImage(const AssetImage('assets/logo.png'), context);
+    precacheImage(const AssetImage('assets/branding.png'), context);
+  }
+
   _navigateToHome() async {
-    await Future.delayed(const Duration(seconds: 2)); // Show for 2 seconds
+    // Keep 3 seconds so users have time to see the branding
+    await Future.delayed(const Duration(seconds: 3));
     if (mounted) {
       Navigator.pushReplacement(
         context,
@@ -28,53 +37,75 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // FIXED: Added 'FF' for full opacity. 0x06275C is transparent; 0xFF06275C is visible Blue.
-      backgroundColor: const Color(0xFF06275C),
+      backgroundColor: const Color(0xFF06275C), // Dark Blue Background
       body: Stack(
+        fit: StackFit.expand, // ✅ Ensures the Stack fills the whole screen
         children: [
-          // 1. Center Content (Main App Logo + Loader)
+          // ---------------------------------------------
+          // 1. CENTER CONTENT (App Logo + Loader)
+          // ---------------------------------------------
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Image.asset('assets/logo.png', width: 150),
-                const SizedBox(height: 20),
-                const CircularProgressIndicator(color: Colors.white),
+                Image.asset(
+                  'assets/logo.png', 
+                  width: 150,
+                  height: 150,
+                  errorBuilder: (c, e, s) => const Icon(Icons.apps, size: 80, color: Colors.white),
+                ),
+                const SizedBox(height: 30),
+                const CircularProgressIndicator(
+                  color: Colors.white, 
+                  strokeWidth: 3,
+                ),
               ],
             ),
           ),
 
-          // 2. Bottom Branding (Asset Image)
-          Positioned(
-            bottom: 40, // Padding from the bottom of the screen
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                // Optional: You can uncomment the text below if you want "Powered by" text above the logo
-                // Text("Powered by", style: TextStyle(color: Colors.white70, fontSize: 10)),
-                // SizedBox(height: 5),
-                Image.asset(
-                  'assets/branding.png', // <--- Make sure this matches your filename
-                  width: 100, // Adjust width as needed
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Column(
-                      children: [
-                        Icon(Icons.error, color: Colors.red),
-                        Text(
-                          "IMAGE ERROR",
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+          // ---------------------------------------------
+          // 2. BOTTOM BRANDING (Clean Production Layout)
+          // ---------------------------------------------
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 30.0), 
+                child: Column(
+                  mainAxisSize: MainAxisSize.min, 
+                  children: [
+                    const Text(
+                      "Powered by",
+                      style: TextStyle(
+                        color: Colors.white70, 
+                        fontSize: 12,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // --- FINAL LOGO IMPLEMENTATION ---
+                    Image.asset(
+                      'assets/branding.png', 
+                      width: 160,       // ✅ Set width to 160 for readability
+                      fit: BoxFit.contain, // ✅ Ensures it scales without cutting off
+                      
+                      // Fallback just in case
+                      errorBuilder: (c, e, s) => const Text(
+                        "INKWELL CREATIONS", 
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                      ),
+                    ),
+                    // ---------------------------------
+                    
+                    const SizedBox(height: 8),
+                    const Text(
+                      "v1.0.0", 
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ],

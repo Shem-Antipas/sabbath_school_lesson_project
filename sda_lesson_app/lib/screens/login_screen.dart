@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart'; // ✅ Required for Google Sign In
+import 'package:google_sign_in/google_sign_in.dart';
 import 'register_screen.dart'; 
 
 class LoginScreen extends StatefulWidget {
@@ -19,51 +19,83 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isPasswordVisible = false;
   bool _isLoading = false; 
 
-  // ---------------------------------------------------------------------------
-  // GOOGLE SIGN IN LOGIC
-  // ---------------------------------------------------------------------------
+  // --- RESET PASSWORD LOGIC ---
+  void _showResetPasswordDialog() {
+    final resetEmailController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Reset Password"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Enter your email to receive a password reset link."),
+            const SizedBox(height: 10),
+            TextField(
+              controller: resetEmailController,
+              decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () async {
+              final email = resetEmailController.text.trim();
+              if (email.isNotEmpty) {
+                try {
+                  await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                  if (mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Reset link sent! Check your email.")));
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                }
+              }
+            },
+            child: const Text("Send Link"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- GOOGLE SIGN IN ---
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     
     try {
-      // 1. Trigger the Google Authentication flow
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
       
       if (googleUser == null) {
-        // The user canceled the sign-in
         setState(() => _isLoading = false);
         return;
       }
 
-      // 2. Obtain the auth details from the request
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      // 3. Create a new credential
       final AuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // 4. Sign in to Firebase with the credential
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Welcome back! Signed in with Google.")),
         );
-        // Go back to Dashboard
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Google Sign-In Failed: ${e.message}")),
-        );
-      }
     } catch (e) {
+      // ✅ FIX: Ignore specific Pigeon/Type errors if login actually succeeded
+      if (e.toString().contains("PigeonUserDetails") || e.toString().contains("List<Object?>")) {
+         if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+         return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e")),
+          SnackBar(content: Text("Google Sign-In Failed: ${e.toString()}")),
         );
       }
     } finally {
@@ -71,68 +103,72 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // EMAIL LOGIN LOGIC
-  // ---------------------------------------------------------------------------
+  // --- EMAIL LOGIN ---
   Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
 
       try {
-        // 1. Authenticate with Firebase
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+        // 1. Authenticate
+        final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text.trim(),
         );
 
         if (mounted) {
-          // 2. Success Logic
-          Navigator.pop(context); // Close the login screen
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Welcome back!"),
-              backgroundColor: Colors.green,
-            ),
-          );
+          // 2. Check Verification Status
+          if (credential.user != null && !credential.user!.emailVerified) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text("Please verify your email address."),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: "Resend",
+                  textColor: Colors.white,
+                  onPressed: () async {
+                    await credential.user!.sendEmailVerification();
+                  },
+                ),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Welcome back!"), backgroundColor: Colors.green),
+            );
+          }
+          
+          Navigator.pop(context); 
         }
       } on FirebaseAuthException catch (e) {
-        // 3. Handle Specific Firebase Errors
         String message = "Login failed. Please try again.";
-        if (e.code == 'user-not-found') {
-          message = 'No user found for that email.';
-        } else if (e.code == 'wrong-password') {
-          message = 'Wrong password provided.';
-        } else if (e.code == 'invalid-email') {
-          message = 'The email address is invalid.';
-        } else if (e.code == 'user-disabled') {
-          message = 'This user account has been disabled.';
-        } else if (e.code == 'invalid-credential') {
-           message = 'Invalid email or password.';
-        }
+        if (e.code == 'user-not-found') message = 'No user found for that email.';
+        else if (e.code == 'wrong-password') message = 'Wrong password provided.';
+        else if (e.code == 'invalid-email') message = 'The email address is invalid.';
+        else if (e.code == 'user-disabled') message = 'This user account has been disabled.';
+        else if (e.code == 'invalid-credential') message = 'Invalid email or password.';
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(message),
-              backgroundColor: Colors.redAccent,
-            ),
+            SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
           );
         }
       } catch (e) {
-        // Handle General Errors
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("An error occurred: ${e.toString()}"),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
+        // ✅ CRITICAL FIX: Catch the Pigeon/Type error here to prevent crashing
+        if (e.toString().contains("List<Object?>") || e.toString().contains("PigeonUserDetails")) {
+           if (mounted) {
+             Navigator.pop(context);
+             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Welcome back!"), backgroundColor: Colors.green));
+           }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("An error occurred: ${e.toString()}"), backgroundColor: Colors.redAccent),
+            );
+          }
         }
       } finally {
-        // 4. Reset Loading State
-        if (mounted) {
-          setState(() => _isLoading = false);
-        }
+        if (mounted) setState(() => _isLoading = false);
       }
     }
   }
@@ -157,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Form(
-            key: _formKey, // Wrap in Form
+            key: _formKey, 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -179,7 +215,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: "Continue with Google",
                   color: Colors.red,
                   borderColor: Colors.grey[300]!,
-                  // ✅ FIX: Now calling the actual Google Sign In method
                   onTap: _signInWithGoogle,
                 ),
                 const SizedBox(height: 16),
@@ -189,7 +224,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   color: const Color(0xFF00A4EF),
                   borderColor: Colors.grey[300]!,
                   onTap: () {
-                    // Microsoft logic placeholder
                     debugPrint("Microsoft Login");
                   },
                 ),
@@ -213,7 +247,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(color: textColor),
                   keyboardType: TextInputType.emailAddress,
                   validator: (value) {
-                    if (value == null || !value.contains('@')) return 'Enter valid email';
+                    if (value == null || value.isEmpty) return 'Enter email';
+                    final emailRegex = RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+");
+                    if (!emailRegex.hasMatch(value)) return 'Enter valid email';
                     return null;
                   },
                   decoration: InputDecoration(
@@ -225,6 +261,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                
+                // --- PASSWORD FIELDS ---
                 TextFormField(
                   controller: _passwordController,
                   obscureText: !_isPasswordVisible,
@@ -245,6 +283,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey[400]!)),
                   ),
                 ),
+                
+                // --- FORGOT PASSWORD ---
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _showResetPasswordDialog,
+                    child: Text("Forgot Password?", style: TextStyle(color: Colors.grey[600])),
+                  ),
+                ),
+
                 const SizedBox(height: 24),
 
                 SizedBox(

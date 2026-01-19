@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.4.9
-  path_provider: ^2.1.0
+  path_provider: ^2.1.5
   dio: ^5.4.0
   json_annotation: ^4.8.1
   cached_network_image: ^3.3.0
@@ -29,8 +29,11 @@ dependencies:
   font_awesome_flutter: ^10.12.0
   firebase_core: ^2.24.2
   firebase_auth: ^4.16.0
-  google_sign_in: ^6.1.6
+  google_sign_in: ^6.2.1
   flutter_secure_storage: ^9.0.0
+  image_picker: ^1.2.1
+  firebase_storage: ^11.6.5
+  firebase_app_distribution: ^1.1.1
   
 
   # You can remove flutter_markdown as it isn't needed for this API
@@ -48,6 +51,11 @@ flutter:
   assets:
     # - assets/hymnals/
     - assets/hymns.json
+    - assets/data/hymns_en.json
+    - assets/data/hymns_ek.json
+    - assets/data/hymns_gk.json
+    - assets/data/hymns_lu.json
+    - assets/data/hymns_sw.json
     - assets/images/
     - assets/bible.db
     - assets/branding.png

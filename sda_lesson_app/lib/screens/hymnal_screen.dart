@@ -30,7 +30,6 @@ class HymnalScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final dialogBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
-    // FIX: Use White for the big display number in Dark Mode
     final displayColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
     final btnBg = isDark ? Colors.grey[800] : Colors.grey[200];
 
@@ -60,7 +59,7 @@ class HymnalScreen extends ConsumerWidget {
                       style: TextStyle(
                         fontSize: 40,
                         fontWeight: FontWeight.bold,
-                        color: displayColor, // <--- FIXED COLOR HERE
+                        color: displayColor,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -71,11 +70,11 @@ class HymnalScreen extends ConsumerWidget {
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8,
-                              childAspectRatio: 1.3,
-                            ),
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 1.3,
+                        ),
                         itemCount: 12,
                         itemBuilder: (context, index) {
                           String label = "";
@@ -84,7 +83,6 @@ class HymnalScreen extends ConsumerWidget {
                           if (index == 10) label = "0";
                           if (index == 11) label = "GO";
 
-                          // 'GO' button stays Red brand color
                           final isGoBtn = label == "GO";
 
                           return ElevatedButton(
@@ -93,9 +91,8 @@ class HymnalScreen extends ConsumerWidget {
                               backgroundColor: isGoBtn
                                   ? const Color(0xFF7D2D3B)
                                   : btnBg,
-                              foregroundColor: isGoBtn
-                                  ? Colors.white
-                                  : textColor,
+                              foregroundColor:
+                                  isGoBtn ? Colors.white : textColor,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -150,22 +147,107 @@ class HymnalScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 1. Watch Providers
     final filteredHymnsAsync = ref.watch(filteredHymnsProvider);
+    final currentLanguage = ref.watch(hymnLanguageProvider);
 
-    // 2. Theme Logic for Main Screen
+    // 2. Theme Logic
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF7F4F2);
-    const appBarColor = Color(0xFF7D2D3B);
+    final backgroundColor =
+        isDark ? const Color(0xFF121212) : const Color(0xFFF7F4F2);
+    const brandColor = Color(0xFF7D2D3B);
 
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
-        backgroundColor: appBarColor,
+        backgroundColor: brandColor,
         elevation: 0,
-        title: const Text("Hymnal", style: TextStyle(color: Colors.white)),
         leading: const Icon(Icons.chevron_left, color: Colors.white),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Hymnal",
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            // ✅ SHOW CURRENT LANGUAGE SUBTITLE
+            Text(
+              currentLanguage.label,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          // ✅ LANGUAGE SWITCHER ICON
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+            child: PopupMenuButton<HymnLanguage>(
+              tooltip: "Switch Language",
+              offset: const Offset(0, 40), // Lowers the menu slightly
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onSelected: (HymnLanguage lang) {
+                ref.read(hymnLanguageProvider.notifier).state = lang;
+              },
+              // Instead of a simple icon, we use a 'child' to make a button
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2), // Semi-transparent pill
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white30),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.language, color: Colors.white, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      currentLanguage.label.toUpperCase(), // e.g., "ENGLISH"
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                  ],
+                ),
+              ),
+              itemBuilder: (BuildContext context) {
+                return HymnLanguage.values.map((HymnLanguage lang) {
+                  return PopupMenuItem<HymnLanguage>(
+                    value: lang,
+                    child: Row(
+                      children: [
+                        Icon(
+                          lang == currentLanguage
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          color: lang == currentLanguage
+                              ? brandColor
+                              : Colors.grey,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          lang.label,
+                          style: TextStyle(
+                            fontWeight: lang == currentLanguage 
+                                ? FontWeight.bold 
+                                : FontWeight.normal,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList();
+              },
+            ),
+          ),
+        ],
       ),
       body: filteredHymnsAsync.when(
         data: (hymns) => Column(
@@ -322,12 +404,10 @@ class HymnalScreen extends ConsumerWidget {
     List<Hymn> allHymns,
     bool isDark,
   ) {
-    // 3. Theme Colors for List Item
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
     final subtitleColor = isDark ? Colors.grey[400] : Colors.black;
     final avatarBg = isDark ? Colors.grey[800] : const Color(0xFFF7F4F2);
-    // FIX: Use White for numbers in Dark Mode
     final numberColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
 
     return Container(
@@ -345,7 +425,7 @@ class HymnalScreen extends ConsumerWidget {
           child: Text(
             "${hymn.id}",
             style: TextStyle(
-              color: numberColor, // <--- FIXED COLOR HERE
+              color: numberColor,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -402,7 +482,8 @@ class HymnalScreen extends ConsumerWidget {
           LinearProgressIndicator(
             value: progress,
             backgroundColor: isDark ? Colors.grey[700] : Colors.grey[200],
-            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7D2D3B)),
+            valueColor:
+                const AlwaysStoppedAnimation<Color>(Color(0xFF7D2D3B)),
             minHeight: 2,
           ),
           const SizedBox(height: 8),
@@ -467,7 +548,6 @@ class _StickyTopicHeaderDelegate extends SliverPersistentHeaderDelegate {
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w900,
-          // FIX: Use White for topic headers in Dark Mode
           color: isDark ? Colors.white70 : const Color(0xFF7D2D3B),
           letterSpacing: 1.1,
         ),

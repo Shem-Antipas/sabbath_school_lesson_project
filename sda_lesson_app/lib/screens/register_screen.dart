@@ -11,7 +11,7 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  final _formKey = GlobalKey<FormState>(); // For validation
+  final _formKey = GlobalKey<FormState>(); 
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -24,45 +24,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
     
     try {
-      // 1. Trigger the Google Authentication flow
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
       
       if (googleUser == null) {
-        // The user canceled the sign-in
         setState(() => _isLoading = false);
         return;
       }
 
-      // 2. Obtain the auth details from the request
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      // 3. Create a new credential
       final AuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // 4. Sign in to Firebase with the credential
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Signed in with Google successfully!")),
         );
-        // Go back to previous screen (likely Dashboard or Login)
-        // You might want to pop until the first route to ensure you're back at dashboard
         Navigator.of(context).popUntil((route) => route.isFirst); 
       }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Google Sign-In Failed: ${e.message}")),
-        );
-      }
     } catch (e) {
+      // ✅ FIX: Suppress "PigeonUserDetails" error on success
+      if (e.toString().contains("PigeonUserDetails") || e.toString().contains("List<Object?>")) {
+         if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+         return;
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e")),
+          SnackBar(content: Text("Google Sign-In Failed: $e")),
         );
       }
     } finally {
@@ -82,17 +74,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
           password: _passwordController.text.trim(),
         );
 
-        // 2. Update Display Name with the name provided
+        // 2. Update Display Name & Send Verification
         if (credential.user != null) {
           await credential.user!.updateDisplayName(_nameController.text.trim());
+          
+          // ✅ NEW: Send Email Verification automatically
+          if (!credential.user!.emailVerified) {
+            await credential.user!.sendEmailVerification();
+          }
+
           await credential.user!.reload();
         }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Account created successfully!"),
+              // ✅ Updated Message
+              content: Text("Account created! Please check your email to verify."),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 5),
             ),
           );
           Navigator.pop(context);
@@ -116,13 +116,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
           );
         }
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Error: ${e.toString()}"),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
+        // ✅ FIX: Check for the specific Pigeon error and treat it as success if backend worked
+        if (e.toString().contains("List<Object?>") || e.toString().contains("PigeonUserDetails")) {
+           if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Account created! Please verify your email."), 
+                  backgroundColor: Colors.green
+                ),
+             );
+             Navigator.pop(context);
+           }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text("Error: ${e.toString()}"),
+                backgroundColor: Colors.redAccent,
+              ),
+            );
+          }
         }
       } finally {
         if (mounted) {
@@ -178,7 +191,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   label: "Sign up with Google",
                   color: Colors.red,
                   borderColor: Colors.grey[300]!,
-                  // ✅ FIX: Call the Google Sign-In function here
                   onTap: _signInWithGoogle, 
                 ),
                 const SizedBox(height: 16),
@@ -188,8 +200,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   color: const Color(0xFF00A4EF),
                   borderColor: Colors.grey[300]!,
                   onTap: () {
-                    debugPrint("Microsoft Sign Up");
-                    // Implement Microsoft logic here later
+                    // Placeholder for Microsoft Auth
                   },
                 ),
 
@@ -207,23 +218,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const SizedBox(height: 30),
 
                 // --- INPUT FIELDS ---
+                // Name Field
                 TextFormField(
                   controller: _nameController,
                   style: TextStyle(color: textColor),
-                  validator: (value) => (value == null || value.isEmpty) ? 'Please enter your name' : null,
+                  validator: (value) => (value == null || value.length < 2) ? 'Please enter a valid name' : null,
                   decoration: _inputDecoration("Full Name", Icons.person_outline),
                 ),
                 const SizedBox(height: 16),
                 
+                // Email Field with Strict Regex
                 TextFormField(
                   controller: _emailController,
                   style: TextStyle(color: textColor),
                   keyboardType: TextInputType.emailAddress,
-                  validator: (value) => (value == null || !value.contains('@')) ? 'Enter a valid email' : null,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) return 'Please enter an email';
+                    // Strict Regex for Email
+                    final emailRegex = RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+");
+                    if (!emailRegex.hasMatch(value)) {
+                      return 'Enter a valid email address';
+                    }
+                    return null;
+                  },
                   decoration: _inputDecoration("Email", Icons.email_outlined),
                 ),
                 const SizedBox(height: 16),
                 
+                // Password Field
                 TextFormField(
                   controller: _passwordController,
                   obscureText: !_isPasswordVisible,

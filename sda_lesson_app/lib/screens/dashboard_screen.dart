@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // Required for Auth check
+import 'package:firebase_auth/firebase_auth.dart'; 
 
 // --- SERVICES & PROVIDERS ---
 import '../services/daily_verse_service.dart';
@@ -15,8 +15,8 @@ import 'bible_screen.dart';
 import 'egw_library_screen.dart';
 import 'home_screen.dart';
 import 'lesson_list_screen.dart';
-import 'login_screen.dart';   // Ensure this file exists and class is named LoginScreen
-import 'profile_screen.dart'; // Ensure this file exists and class is named ProfileScreen
+import 'login_screen.dart';   
+import 'profile_screen.dart'; 
 
 // --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
@@ -38,7 +38,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       if (mounted) {
         await _checkAndShowSabbathPopup();
       }
+      // ✅ Refresh user with safety check
+      _refreshUser();
     });
+  }
+
+  // ✅ CRASH-PROOF USER REFRESH
+  Future<void> _refreshUser() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        await user.reload();
+      } catch (e) {
+        // Ignore the specific Pigeon decode error if it happens
+        debugPrint("User reload warning (ignored): $e");
+      }
+      if (mounted) setState(() {}); 
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -270,14 +286,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // UI BUILD METHODS
+  // GREETING LOGIC
   // ---------------------------------------------------------------------------
-
-  String _getGreeting() {
+  String _getGreeting(User? user) {
     final hour = DateTime.now().hour;
-    if (hour < 12) return "Good Morning";
-    if (hour < 17) return "Good Afternoon";
-    return "Good Evening";
+    String timeGreeting;
+    
+    if (hour < 12) {
+      timeGreeting = "Good Morning";
+    } else if (hour < 17) {
+      timeGreeting = "Good Afternoon";
+    } else {
+      timeGreeting = "Good Evening";
+    }
+
+    if (user != null && user.displayName != null && user.displayName!.isNotEmpty) {
+      final firstName = user.displayName!.split(' ')[0];
+      return "$timeGreeting, $firstName";
+    }
+
+    return timeGreeting;
   }
 
   @override
@@ -306,16 +334,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             elevation: 0,
             backgroundColor: backgroundColor,
             centerTitle: false,
-            title: Padding(
-              padding: const EdgeInsets.only(top: 20),
-              child: Text(
-                _getGreeting(),
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            // -----------------------------------------------------------------
+            // STREAM BUILDER
+            // -----------------------------------------------------------------
+            title: StreamBuilder<User?>(
+              stream: FirebaseAuth.instance.userChanges(),
+              builder: (context, snapshot) {
+                final user = snapshot.data;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: Text(
+                    _getGreeting(user), 
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                );
+              },
             ),
             actions: [
               Padding(
@@ -337,26 +374,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 padding: const EdgeInsets.only(right: 16, top: 20),
                 child: InkWell(
                   // -----------------------------------------------------------
-                  // ✅ UPDATED PROFILE LOGIC
+                  // ONTAP NAVIGATION
                   // -----------------------------------------------------------
                   onTap: () {
                     final user = FirebaseAuth.instance.currentUser;
                     if (user != null) {
-                      // If Logged In -> Go to Profile
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const ProfileScreen(),
                         ),
-                      );
+                      ).then((_) {
+                        _refreshUser();
+                      });
                     } else {
-                      // If Logged Out -> Go to Login
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const LoginScreen(),
                         ),
-                      );
+                      ).then((_) {
+                        _refreshUser();
+                      });
                     }
                   },
                   borderRadius: BorderRadius.circular(50),
@@ -375,10 +414,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Optional Inline Sabbath Card
                   if (showSabbath) ...[
                     // const SabbathCard(), 
-                    // const SizedBox(height: 20),
                   ],
 
                   _buildDailyVerseCard(todayVerse),
@@ -448,7 +485,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               builder: (context) => BibleScreen(
                 initialBook: parsed['book'],
                 initialChapter: parsed['chapter'],
-                targetVerse: parsed['verse'], // Highlight this verse
+                targetVerse: parsed['verse'],
               ),
             ),
           );
