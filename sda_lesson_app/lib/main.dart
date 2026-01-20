@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/main_navigation.dart';
 import 'providers/theme_provider.dart'; // Import the new persistent provider
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,12 @@ class MyApp extends ConsumerWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Advent Study Hub',
+
+      // --- NEW: This line enables the Analytics tracking ---
+      navigatorObservers: [
+        FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
+      ],
+      // ----------------------------------------------------
 
       // LIGHT THEME (Your existing styles)
       theme: ThemeData(

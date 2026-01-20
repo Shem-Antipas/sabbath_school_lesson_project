@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/data_providers.dart';
 import 'reader_screen.dart';
+import '../services/analytics_service.dart'; // ✅ Import Analytics Service
 
 class LessonListScreen extends ConsumerWidget {
   final String quarterlyId;
@@ -46,24 +47,18 @@ class LessonListScreen extends ConsumerWidget {
                 itemBuilder: (context, index) {
                   final lesson = lessons[index];
 
-                  // --- FIX: REMOVE PROXY, USE DIRECT URL ---
-                  // If lesson.cover exists, check if it's full URL. If not, construct it.
+                  // --- IMAGE LOGIC ---
                   String imageUrl = lesson.cover ?? rawQuarterlyCover;
 
                   if (!imageUrl.startsWith('http')) {
-                    // Construct full URL if it's a relative path
                     imageUrl =
                         "https://sabbath-school.adventech.io/api/v1/en/quarterlies/$quarterlyId/lessons/${lesson.id}/cover.png";
-                    // Note: If the API doesn't provide lesson-specific covers,
-                    // it often defaults to the quarterly cover.
-                    // A safer fallback if specific covers fail is simply:
-                    // imageUrl = rawQuarterlyCover;
                   }
 
                   return _buildLessonCard(
                     context,
                     lesson,
-                    imageUrl, // Pass the fixed URL here
+                    imageUrl, 
                     index,
                   );
                 },
@@ -86,6 +81,14 @@ class LessonListScreen extends ConsumerWidget {
   ) {
     return InkWell(
       onTap: () {
+        // ✅ ANALYTICS TRACKING
+        // We pass 'quarterlyId' as the 'date' parameter so you can filter by quarter in Firebase.
+        // Example output in Firebase: lesson_title: "The War Behind All Wars", date: "2024-01"
+        AnalyticsService().logReadLesson(
+          lessonTitle: lesson.title ?? "Lesson ${index + 1}",
+          date: quarterlyId, 
+        );
+
         // Navigation Logic
         String lessonId = (lesson.id ?? "${index + 1}").padLeft(2, '0');
         String cleanQId = quarterlyId.contains('/')
@@ -122,7 +125,7 @@ class LessonListScreen extends ConsumerWidget {
               // Background Image
               Positioned.fill(
                 child: Image.network(
-                  imageUrl, // Using the direct URL now
+                  imageUrl, 
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) => Container(
                     color: Colors.blueGrey[900],
@@ -134,7 +137,7 @@ class LessonListScreen extends ConsumerWidget {
                 ),
               ),
 
-              // Bottom Gradient Overlay for readability
+              // Bottom Gradient Overlay
               Positioned.fill(
                 child: Container(
                   decoration: BoxDecoration(

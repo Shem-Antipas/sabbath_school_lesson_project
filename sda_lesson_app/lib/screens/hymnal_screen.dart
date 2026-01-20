@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/hymnal_provider.dart';
 import 'hymn_detail_screen.dart';
+import '../services/analytics_service.dart';
 
 class HymnalScreen extends ConsumerWidget {
   const HymnalScreen({super.key});
@@ -483,6 +484,10 @@ class HymnalScreen extends ConsumerWidget {
           },
         ),
         onTap: () {
+          AnalyticsService().logSelectHymn(
+          hymnId: hymn.id, 
+          hymnTitle: hymn.title
+        );
           Navigator.push(
             context,
             MaterialPageRoute(

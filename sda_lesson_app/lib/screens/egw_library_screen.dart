@@ -7,6 +7,7 @@ import '../providers/theme_provider.dart';
 import '../models/book_meta.dart'; 
 import 'egw_toc_screen.dart'; 
 import 'egw_book_detail_screen.dart';
+import '../services/analytics_service.dart'; // ✅ Imported
 
 // --- PROVIDER FOR FILTERING ---
 final showFavoritesOnlyProvider = StateProvider<bool>((ref) => false);
@@ -160,6 +161,12 @@ class _EGWLibraryScreenState extends ConsumerState<EGWLibraryScreen> {
 
     return GestureDetector(
       onTap: () {
+        // ✅ ANALYTICS: Track opening a book from the library
+        AnalyticsService().logReadEgw(
+          bookTitle: book.title, 
+          chapterTitle: "Table of Contents" // Default context
+        );
+
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -312,7 +319,12 @@ class EGWSearchDelegate extends SearchDelegate {
               ),
               isThreeLine: true,
               onTap: () {
-                // Pass exact index for correct scrolling
+                // ✅ ANALYTICS: Track clicking a search result (Deep Link)
+                AnalyticsService().logReadEgw(
+                  bookTitle: book.title, 
+                  chapterTitle: chapterTitle
+                );
+
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -356,6 +368,12 @@ class EGWSearchDelegate extends SearchDelegate {
                   leading: Image.asset(book.coverImage, width: 30),
                   title: Text(book.title),
                   onTap: () {
+                    // ✅ ANALYTICS: Track clicking a book suggestion
+                    AnalyticsService().logReadEgw(
+                      bookTitle: book.title, 
+                      chapterTitle: "Table of Contents"
+                    );
+
                     Navigator.push(
                       context,
                       MaterialPageRoute(

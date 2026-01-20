@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
 import 'bible_reader_screen.dart';
 import 'bible_verse_screen.dart'; 
+import '../services/analytics_service.dart';
 
 class BibleChapterScreen extends ConsumerWidget {
   final String bookId;
@@ -80,15 +81,18 @@ class BibleChapterScreen extends ConsumerWidget {
 
               return InkWell(
                 onTap: () {
-                  // Navigate to Verse Selection
+         AnalyticsService().logReadBible(
+      book: bookName,
+      chapter: int.parse(chapter['number'].toString()), 
+    );      // Navigate to Verse Selection
                   Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => BibleVerseScreen(
-                        bookId: bookId,
-                        bookName: bookName,
-                        chapterId: chapter['id'],
-                        chapterNumber: chapter['number'],
+      context,
+      MaterialPageRoute(
+        builder: (context) => BibleVerseScreen(
+          bookId: bookId,
+          bookName: bookName,
+          chapterId: chapter['id'],
+          chapterNumber: chapter['number'],
                       ),
                     ),
                   );
