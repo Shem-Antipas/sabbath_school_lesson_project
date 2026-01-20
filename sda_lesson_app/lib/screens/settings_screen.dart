@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // ✅ 1. IMPORT THE PACKAGE
-import 'package:firebase_app_distribution/firebase_app_distribution.dart'; 
 import '../providers/favorites_provider.dart';
 import '../providers/hymnal_provider.dart'; 
 import '../providers/theme_provider.dart'; 

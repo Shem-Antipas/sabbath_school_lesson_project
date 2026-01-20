@@ -12,6 +12,7 @@ import '../providers/data_providers.dart';
 import 'hymnal_screen.dart';
 import 'settings_screen.dart';
 import 'bible_screen.dart';
+import 'bible_reader_screen.dart';
 import 'egw_library_screen.dart';
 import 'home_screen.dart';
 import 'lesson_list_screen.dart';
@@ -20,7 +21,6 @@ import 'profile_screen.dart';
 
 // --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
-import 'package:sda_lesson_app/widgets/greeting_cards.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -475,101 +475,146 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // --- WIDGET HELPERS ---
 
   Widget _buildDailyVerseCard(DailyVerse verse) {
-    return GestureDetector(
-      onTap: () {
-        final parsed = parseBibleReference(verse.reference);
-        if (parsed != null) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => BibleScreen(
-                initialBook: parsed['book'],
-                initialChapter: parsed['chapter'],
-                targetVerse: parsed['verse'],
-              ),
-            ),
-          );
-        } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const BibleScreen()),
-          );
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2C3E50), Color(0xFF4CA1AF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2C3E50).withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF2C3E50).withOpacity(0.3),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Icon(Icons.format_quote, color: Colors.white54, size: 32),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Row(
-                    children: [
-                      Text(
-                        "Read Now",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Icon(Icons.format_quote, color: Colors.white54, size: 32),
+              
+              // ---------------------------------------------------------------
+              // UPDATED VISIBLE BUTTON
+              // ---------------------------------------------------------------
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _handleVerseNavigation(verse.reference),
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16, 
+                      vertical: 8
+                    ), // Large touch target
+                    decoration: BoxDecoration(
+                      color: Colors.white, // High Contrast Background
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 4,
+                          offset: Offset(0, 2),
+                        )
+                      ]
+                    ),
+                    child: const Row(
+                      children: [
+                        Text(
+                          "Read Now",
+                          style: TextStyle(
+                            color: Color(0xFF2C3E50), // Dark text for readability
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      SizedBox(width: 4),
-                      Icon(Icons.arrow_forward, color: Colors.white, size: 10),
-                    ],
+                        SizedBox(width: 8),
+                        Icon(
+                          Icons.arrow_forward_rounded, 
+                          color: Color(0xFF2C3E50), 
+                          size: 18
+                        ),
+                      ],
+                    ),
                   ),
-                )
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              verse.text,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                height: 1.4,
-                fontWeight: FontWeight.w500,
-                fontStyle: FontStyle.italic,
+                ),
               ),
+              // ---------------------------------------------------------------
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            verse.text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              height: 1.4,
+              fontWeight: FontWeight.w500,
+              fontStyle: FontStyle.italic,
             ),
-            const SizedBox(height: 16),
-            Text(
-              "- ${verse.reference}",
-              style: const TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            "- ${verse.reference}",
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // NEW HELPER: Handles navigation logic separately from UI
+  // ---------------------------------------------------------------------------
+  void _handleVerseNavigation(String reference) {
+    debugPrint("Attempting to parse reference: $reference");
+    
+    final parsed = parseBibleReference(reference);
+    
+    if (parsed != null) {
+      final String book = parsed['book'];
+      final int chapter = parsed['chapter'];
+      final int verse = parsed['verse']; //
+      
+      // 1. Generate the ID (e.g., "PSA.23") using the helper
+      final String bookId = _getBookId(book); 
+      final String chapterId = "$bookId.$chapter"; 
+      
+      // 2. Generate the Readable Reference (e.g., "Psalms 23")
+      final String displayReference = "$book $chapter";
+
+      debugPrint("Navigating to: $chapterId ($displayReference)");
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => BibleReaderScreen(
+            // ✅ PASSING CORRECT NAMED ARGUMENTS
+            chapterId: chapterId,
+            reference: displayReference,
+            targetVerse: verse,
+          ),
+        ),
+      );
+    } else {
+      debugPrint("Parsing failed. Opening generic Bible Screen.");
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const BibleScreen()),
+      );
+    }
+  }
   Widget _buildSabbathSchoolCard(
     BuildContext context,
     dynamic quarterly,
@@ -770,27 +815,69 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // UPDATED PARSE LOGIC: Handles Ranges and Hyphens
+  // ---------------------------------------------------------------------------
   Map<String, dynamic>? parseBibleReference(String reference) {
     try {
-      int lastSpaceIndex = reference.lastIndexOf(' ');
+      final cleanRef = reference.trim();
+      
+      // Find separator between book name and numbers
+      int lastSpaceIndex = cleanRef.lastIndexOf(' ');
       if (lastSpaceIndex == -1) return null;
 
-      String book = reference.substring(0, lastSpaceIndex).trim();
-      String location = reference.substring(lastSpaceIndex + 1).trim();
+      String book = cleanRef.substring(0, lastSpaceIndex).trim();
+      String location = cleanRef.substring(lastSpaceIndex + 1).trim();
+
+      if (book == "Psalm") {
+        book = "Psalms";
+      }
+
+      // Ensure we have 'Chapter:Verse' format
+      if (!location.contains(':')) return null;
 
       List<String> parts = location.split(':');
-      if (parts.length != 2) return null;
+      
+      // FIX: Handle verse ranges (e.g., "16-18") by taking only the first part
+      String versePart = parts[1];
+      if (versePart.contains('-')) {
+        versePart = versePart.split('-')[0];
+      }
 
       return {
         'book': book,
         'chapter': int.parse(parts[0]),
-        'verse': int.parse(parts[1]),
+        'verse': int.parse(versePart),
       };
     } catch (e) {
       debugPrint("Verse Parse Error: $e");
       return null;
     }
   }
+  String _getBookId(String bookName) {
+    final map = {
+      'Genesis': 'GEN', 'Exodus': 'EXO', 'Leviticus': 'LEV', 'Numbers': 'NUM', 'Deuteronomy': 'DEU',
+      'Joshua': 'JOS', 'Judges': 'JDG', 'Ruth': 'RUT', '1 Samuel': '1SA', '2 Samuel': '2SA',
+      '1 Kings': '1KI', '2 Kings': '2KI', '1 Chronicles': '1CH', '2 Chronicles': '2CH',
+      'Ezra': 'EZR', 'Nehemiah': 'NEH', 'Esther': 'EST', 'Job': 'JOB', 'Psalms': 'Ps',
+      'Psalm': 'Ps',   
+      'Proverbs': 'PRO', 'Ecclesiastes': 'ECC', 'Song of Solomon': 'SNG', 'Isaiah': 'ISA',
+      'Jeremiah': 'JER', 'Lamentations': 'LAM', 'Ezekiel': 'EZK', 'Daniel': 'DAN',
+      'Hosea': 'HOS', 'Joel': 'JOL', 'Amos': 'AMO', 'Obadiah': 'OBA', 'Jonah': 'JON',
+      'Micah': 'MIC', 'Nahum': 'NAM', 'Habakkuk': 'HAB', 'Zephaniah': 'ZEP',
+      'Haggai': 'HAG', 'Zechariah': 'ZEC', 'Malachi': 'MAL',
+      'Matthew': 'MAT', 'Mark': 'MRK', 'Luke': 'LUK', 'John': 'JHN', 'Acts': 'ACT',
+      'Romans': 'ROM', '1 Corinthians': '1CO', '2 Corinthians': '2CO', 'Galatians': 'GAL',
+      'Ephesians': 'EPH', 'Philippians': 'PHP', 'Colossians': 'COL',
+      '1 Thessalonians': '1TH', '2 Thessalonians': '2TH', '1 Timothy': '1TI',
+      '2 Timothy': '2TI', 'Titus': 'TIT', 'Philemon': 'PHM', 'Hebrews': 'HEB',
+      'James': 'JAS', '1 Peter': '1PE', '2 Peter': '2PE', '1 John': '1JN',
+      '2 John': '2JN', '3 John': '3JN', 'Jude': 'JUD', 'Revelation': 'REV'
+    };
+    // Default to first 3 letters uppercase if not found
+    return map[bookName] ?? bookName.substring(0, 3).toUpperCase();
+  }
+
 }
 
 class _SectionLabel extends StatelessWidget {

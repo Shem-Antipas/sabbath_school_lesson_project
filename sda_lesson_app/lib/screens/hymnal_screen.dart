@@ -18,6 +18,11 @@ class HymnalScreen extends ConsumerWidget {
     return groups;
   }
 
+  // ✅ IMPROVED REGEX: Removes Digits (1), Dots (.), Spaces ( ), Hyphens (-), and Dashes (–)
+  String _cleanTitle(String rawTitle) {
+    return rawTitle.replaceFirst(RegExp(r'^[\d\.\s\-\–]+'), '').trim();
+  }
+
   // --- JUMP TO NUMBER DIALOG ---
   void _showJumpToDialog(
     BuildContext context,
@@ -26,7 +31,7 @@ class HymnalScreen extends ConsumerWidget {
   ) {
     String input = "";
 
-    // 1. Theme Logic for Dialog
+    // Theme Logic for Dialog
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final dialogBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
@@ -53,7 +58,6 @@ class HymnalScreen extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // THE INPUT DISPLAY
                     Text(
                       input.isEmpty ? "---" : input,
                       style: TextStyle(
@@ -147,15 +151,21 @@ class HymnalScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 1. Watch Providers
     final filteredHymnsAsync = ref.watch(filteredHymnsProvider);
     final currentLanguage = ref.watch(hymnLanguageProvider);
 
-    // 2. Theme Logic
+    ref.listen(hymnLanguageProvider, (previous, next) {
+      if (next != HymnLanguage.english) {
+        ref.read(audioProvider.notifier).stop();
+      }
+    });
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-        isDark ? const Color(0xFF121212) : const Color(0xFFF7F4F2);
-    const brandColor = Color(0xFF7D2D3B);
+    
+    // Theme Colors
+    final backgroundColor = isDark ? const Color(0xFF121212) : const Color(0xFFF7F4F2);
+    final brandColor = const Color(0xFF7D2D3B); 
+    final appBarTextColor = Colors.white;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -166,34 +176,39 @@ class HymnalScreen extends ConsumerWidget {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               "Hymnal",
               style: TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold),
+                  color: appBarTextColor, fontWeight: FontWeight.bold),
             ),
-            // ✅ SHOW CURRENT LANGUAGE SUBTITLE
             Text(
-              currentLanguage.label,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              currentLanguage.label, // Dynamic label from Enum
+              style: TextStyle(color: appBarTextColor.withOpacity(0.7), fontSize: 12),
             ),
           ],
         ),
         actions: [
-          // ✅ LANGUAGE SWITCHER ICON
+          // ✅ DYNAMIC LANGUAGE SWITCHER
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
             child: PopupMenuButton<HymnLanguage>(
               tooltip: "Switch Language",
-              offset: const Offset(0, 40), // Lowers the menu slightly
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              offset: const Offset(0, 50),
+              
+              // ✅ FIXED: Background Color responds to Theme
+              color: isDark ? const Color(0xFF252525) : Colors.white,
+              elevation: 4,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              
               onSelected: (HymnLanguage lang) {
                 ref.read(hymnLanguageProvider.notifier).state = lang;
               },
-              // Instead of a simple icon, we use a 'child' to make a button
+              
+              // The Button Trigger
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2), // Semi-transparent pill
+                  color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.white30),
                 ),
@@ -203,7 +218,7 @@ class HymnalScreen extends ConsumerWidget {
                     const Icon(Icons.language, color: Colors.white, size: 16),
                     const SizedBox(width: 8),
                     Text(
-                      currentLanguage.label.toUpperCase(), // e.g., "ENGLISH"
+                      currentLanguage.label.toUpperCase(),
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -215,29 +230,32 @@ class HymnalScreen extends ConsumerWidget {
                   ],
                 ),
               ),
+              
+              // The Menu Items
               itemBuilder: (BuildContext context) {
                 return HymnLanguage.values.map((HymnLanguage lang) {
+                  final isSelected = lang == currentLanguage;
                   return PopupMenuItem<HymnLanguage>(
                     value: lang,
                     child: Row(
                       children: [
                         Icon(
-                          lang == currentLanguage
+                          isSelected
                               ? Icons.radio_button_checked
                               : Icons.radio_button_unchecked,
-                          color: lang == currentLanguage
-                              ? brandColor
+                          color: isSelected
+                              ? const Color(0xFF7D2D3B)
                               : Colors.grey,
-                          size: 20,
+                          size: 22,
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 16),
                         Text(
                           lang.label,
                           style: TextStyle(
-                            fontWeight: lang == currentLanguage 
-                                ? FontWeight.bold 
-                                : FontWeight.normal,
-                            color: Colors.black87,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            // ✅ FIXED: Text Color responds to Theme
+                            color: isDark ? Colors.white : Colors.black87,
+                            fontSize: 16,
                           ),
                         ),
                       ],
@@ -287,7 +305,7 @@ class HymnalScreen extends ConsumerWidget {
                 ),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 filled: true,
-                fillColor: isDark ? Colors.grey[800] : Colors.white,
+                fillColor: isDark ? Colors.grey[900] : Colors.white,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -358,8 +376,13 @@ class HymnalScreen extends ConsumerWidget {
       return ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: hymns.length,
-        itemBuilder: (context, index) =>
-            _buildHymnCard(context, hymns[index], hymns, isDark),
+        itemBuilder: (context, index) => _buildHymnCard(
+          context,
+          hymns[index],
+          hymns,
+          isDark,
+          ref, // ✅ 1. Passing Ref Here
+        ),
       );
     }
 
@@ -387,6 +410,7 @@ class HymnalScreen extends ConsumerWidget {
                     topicHymns[index],
                     topicHymns,
                     isDark,
+                    ref, // ✅ 2. Passing Ref Here too
                   ),
                   childCount: topicHymns.length,
                 ),
@@ -403,10 +427,10 @@ class HymnalScreen extends ConsumerWidget {
     Hymn hymn,
     List<Hymn> allHymns,
     bool isDark,
+    WidgetRef ref, // ✅ 3. Accepting Ref Here
   ) {
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
-    final subtitleColor = isDark ? Colors.grey[400] : Colors.black;
     final avatarBg = isDark ? Colors.grey[800] : const Color(0xFFF7F4F2);
     final numberColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
 
@@ -420,6 +444,7 @@ class HymnalScreen extends ConsumerWidget {
         ),
       ),
       child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: CircleAvatar(
           backgroundColor: avatarBg,
           child: Text(
@@ -431,16 +456,32 @@ class HymnalScreen extends ConsumerWidget {
           ),
         ),
         title: Text(
-          hymn.title,
-          style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
+          _cleanTitle(hymn.title),
+          style: TextStyle(
+            fontWeight: FontWeight.w600, 
+            color: textColor,
+            fontSize: 16,
+          ),
         ),
-        subtitle: Text(
-          hymn.lyrics.split('\n').first,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: subtitleColor),
+        // ✅ 4. CORRECT PLAY BUTTON LOGIC
+        trailing: IconButton(
+          icon: const Icon(Icons.play_arrow_rounded, color: Colors.grey),
+          onPressed: () async {
+            // Trigger Play and wait for result
+            bool success = await ref.read(audioProvider.notifier).playHymn(hymn);
+
+            // If returned false (File missing), show SnackBar
+            if (!success && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("Audio for Hymn ${hymn.id} is unavailable."),
+                  backgroundColor: Colors.redAccent,
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          },
         ),
-        trailing: const Icon(Icons.play_arrow_rounded, color: Colors.grey),
         onTap: () {
           Navigator.push(
             context,
@@ -517,10 +558,23 @@ class HymnalScreen extends ConsumerWidget {
                 ),
                 iconSize: 40,
                 color: isDark ? Colors.white : const Color(0xFF333333),
-                onPressed: () => ref.read(audioProvider.notifier).togglePlay(),
+                onPressed: () async {
+                   await ref.read(audioProvider.notifier).togglePlay();
+                },
               ),
+              IconButton(
+                  icon: const Icon(Icons.close),
+                  iconSize: 24,
+                  color: Colors.grey,
+                  tooltip: "Stop & Close",
+                  onPressed: () async {
+                    // This stops audio AND removes the player from screen
+                    ref.read(audioProvider.notifier).stop();
+                  },
+                ),
             ],
           ),
+          SizedBox(height: MediaQuery.of(ref.context).padding.bottom),
         ],
       ),
     );

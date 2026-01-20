@@ -7,7 +7,10 @@ plugins {
 
 android {
     namespace = "adventist.study.hub"
-    compileSdk = flutter.compileSdkVersion
+    
+    // ✅ SDK 36 required
+    compileSdk = 36 
+    
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -22,7 +25,10 @@ android {
     defaultConfig {
         applicationId = "adventist.study.hub"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        
+        // ✅ Target 35 is safe/stable for Play Store
+        targetSdk = 35 
+        
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -40,14 +46,9 @@ flutter {
     source = "../.."
 }
 
-// ✅ NEW SECTION: ADD THIS AT THE BOTTOM
 dependencies {
-    // 1. The API Library (Safe to keep always)
     implementation("com.google.firebase:firebase-appdistribution-api-ktx:16.0.0-beta15")
-
-    // 2. The Full Tester SDK (🚨 ONLY FOR FIREBASE TESTING)
-    // IMPORTANT: When you are ready to upload to the Google Play Store,
-    // you MUST comment out or remove this line below.
-    // If you leave it in, Google Play will reject your app.
+    
+    // 🚨 Uncomment this ONLY for testing distribution, comment out for Play Store
     implementation("com.google.firebase:firebase-appdistribution:16.0.0-beta17")
 }

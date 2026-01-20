@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
 import 'bible_reader_screen.dart';
-import 'bible_verse_screen.dart'; // <--- 1. ADDED IMPORT
+import 'bible_verse_screen.dart'; 
 
 class BibleChapterScreen extends ConsumerWidget {
   final String bookId;
@@ -80,7 +80,7 @@ class BibleChapterScreen extends ConsumerWidget {
 
               return InkWell(
                 onTap: () {
-                  // 2. NAVIGATE TO VERSE SCREEN (Instead of Reader)
+                  // Navigate to Verse Selection
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -127,7 +127,7 @@ class BibleChapterScreen extends ConsumerWidget {
   }
 }
 
-// --- SEARCH LOGIC ---
+// --- UPDATED SEARCH LOGIC ---
 class BibleSearchDelegate extends SearchDelegate {
   final String initialBookId;
   final String initialBookName;
@@ -185,14 +185,17 @@ class BibleSearchDelegate extends SearchDelegate {
                 overflow: TextOverflow.ellipsis,
               ),
               onTap: () {
-                // 3. SEARCH GOES DIRECTLY TO READER
-                // (Because search results are specific verses, not whole chapters)
+                // ✅ THE FIX: Parse the verse number safely
+                int? targetVerse = int.tryParse(item['verseNum'].toString());
+
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => BibleReaderScreen(
                       chapterId: item['chapterId'],
                       reference: item['reference'],
+                      // ✅ PASS IT HERE: This triggers the auto-scroll
+                      targetVerse: targetVerse, 
                     ),
                   ),
                 );

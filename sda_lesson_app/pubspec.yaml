@@ -56,10 +56,12 @@ flutter:
     - assets/data/hymns_gk.json
     - assets/data/hymns_lu.json
     - assets/data/hymns_sw.json
+    - assets/data/hymns_old_en.json
     - assets/images/
     - assets/bible.db
     - assets/branding.png
     - assets/data/
+    - assets/midi/
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true

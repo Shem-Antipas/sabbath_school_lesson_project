@@ -165,10 +165,11 @@ Shared from Advent Study Hub
           Text(
             hymn.title.toUpperCase(),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle( // Removed 'const' to allow dynamic color
               fontSize: 24,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF7D2D3B),
+              // ✅ FIX: Use White in Dark Mode, Red in Light Mode
+              color: isDark ? Colors.white : const Color(0xFF7D2D3B),
               letterSpacing: 1.5,
             ),
           ),

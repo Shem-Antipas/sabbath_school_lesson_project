@@ -36,6 +36,8 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
   @override
   void initState() {
     super.initState();
+    // Debug print to confirm ID is receiving correctly
+    debugPrint("BibleReader Loading: ${widget.chapterId}");
     _versesFuture = _api.fetchChapterVerses(widget.chapterId);
   }
 
@@ -54,13 +56,19 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
     String lastVerseNum = _loadedVerses[sortedIndices.last]['number'] ?? "";
     String refString = widget.reference;
 
+    // Remove the specific verse from reference if it exists (clean up title)
+    // e.g. "Psalm 23:1" -> "Psalm 23"
+    if (refString.contains(':')) {
+      refString = refString.split(':')[0];
+    }
+
     // If multiple verses, append the range to the reference
     if (sortedIndices.length > 1) {
       // e.g. "Genesis 1:1-8"
-      refString = "${widget.reference}:$firstVerseNum-$lastVerseNum";
+      refString = "$refString:$firstVerseNum-$lastVerseNum";
     } else {
       // e.g. "Genesis 1:1"
-      refString = "${widget.reference}:$firstVerseNum";
+      refString = "$refString:$firstVerseNum";
     }
 
     // 3. Add Verse Texts
@@ -160,10 +168,24 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
 
           _loadedVerses = snapshot.data!;
           final verses = _loadedVerses;
+          
+          // ✅ SAFETY CHECK: Handle Empty Chapter
+          if (verses.isEmpty) {
+             return Center(
+              child: Text(
+                "Chapter content not found.",
+                style: TextStyle(color: textColor),
+              ),
+            );
+          }
 
+          // ✅ CRITICAL FIX: Safe Index Calculation
+          // Previous code crashed if verses.isEmpty or targetVerse was invalid
           int initialIndex = 0;
-          if (widget.targetVerse != null) {
-            initialIndex = (widget.targetVerse! - 1).clamp(
+          if (widget.targetVerse != null && verses.isNotEmpty) {
+             // Convert verse number (e.g. 1) to index (0)
+             // Ensure we don't crash by clamping between 0 and length-1
+             initialIndex = (widget.targetVerse! - 1).clamp(
               0,
               verses.length - 1,
             );

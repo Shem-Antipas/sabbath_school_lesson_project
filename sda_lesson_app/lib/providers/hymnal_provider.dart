@@ -3,17 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/material.dart'; // Required for debugPrint
 
 // --- 0. CONFIGURATION MODELS ---
 
 // ✅ LANGUAGE DEFINITION
-// Ensure these paths match your actual asset folder structure exactly
 enum HymnLanguage {
   english('English', 'assets/data/hymns_en.json'),
   swahili('Kiswahili', 'assets/data/hymns_sw.json'),
   kisii('Ekegusii', 'assets/data/hymns_ek.json'),
   luo('Dholuo', 'assets/data/hymns_lu.json'),
-  gikuyu('Gikuyu', 'assets/data/hymns_gk.json');
+  gikuyu('Gikuyu', 'assets/data/hymns_gk.json'),
+  oldHymn('Old Hymn', 'assets/data/hymns_old_en.json');
 
   final String label;
   final String assetPath;
@@ -23,8 +24,8 @@ enum HymnLanguage {
 class Hymn {
   final int id;
   final String title;
-  final String lyrics;      // Plain text for Search & List Preview
-  final String htmlContent; // Raw HTML for the Detail Screen
+  final String lyrics;      
+  final String htmlContent; 
   final String topic;
 
   Hymn({
@@ -35,12 +36,9 @@ class Hymn {
     required this.topic,
   });
 
-  // ✅ ROBUST FACTORY: Handles both English (Simple) and Local (HTML) formats
   factory Hymn.fromJson(Map<String, dynamic> json) {
-    // 1. HANDLE ID: Support both 'id' (English) and 'number' (Swahili)
     int safeId = 0;
     if (json.containsKey('number')) {
-      // Handle case where number might be a String "1" or Int 1
       safeId = json['number'] is int 
           ? json['number'] 
           : int.tryParse(json['number'].toString()) ?? 0;
@@ -50,32 +48,23 @@ class Hymn {
           : int.tryParse(json['id'].toString()) ?? 0;
     }
 
-    // 2. HANDLE LYRICS: Support 'lyrics' (Old) and 'content' (New)
     String rawContent = json['content'] ?? json['lyrics'] ?? "";
-
-    // 3. GENERATE PLAIN TEXT: Remove HTML tags for the list view preview & search
     String plainText = _stripHtml(rawContent);
-
-    // 4. HANDLE TITLE: Remove "1 - " prefix if it exists (Optional cleanup)
     String cleanTitle = json['title'] ?? "Untitled";
 
     return Hymn(
       id: safeId,
       title: cleanTitle,
-      lyrics: plainText,        // Used for search and list subtitle
-      htmlContent: rawContent,  // Used for the detail screen
+      lyrics: plainText,
+      htmlContent: rawContent,
       topic: json['topic'] ?? "General",
     );
   }
 
-  // Helper to remove HTML tags (<br>, <b>, <font>) to get plain text
   static String _stripHtml(String htmlString) {
-    // Replace <br> and <p> with spaces to prevent words mashing together
     String spaced = htmlString.replaceAll(RegExp(r'<(br|p|div)[^>]*>', caseSensitive: false), ' ');
-    // Remove all other tags
     RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
     String stripped = spaced.replaceAll(exp, '');
-    // Remove extra whitespace created by stripping
     return stripped.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 }
@@ -93,35 +82,41 @@ class AudioState {
     this.position = Duration.zero,
     this.duration = Duration.zero,
   });
+
+  AudioState copyWith({
+    Hymn? currentHymn,
+    bool? isPlaying,
+    Duration? position,
+    Duration? duration,
+  }) {
+    return AudioState(
+      currentHymn: currentHymn ?? this.currentHymn,
+      isPlaying: isPlaying ?? this.isPlaying,
+      position: position ?? this.position,
+      duration: duration ?? this.duration,
+    );
+  }
 }
 
 // --- 1. STATE PROVIDERS ---
-
-// ✅ TRACK SELECTED LANGUAGE (Default: English)
 final hymnLanguageProvider = StateProvider<HymnLanguage>((ref) => HymnLanguage.english);
-
 final hymnSearchProvider = StateProvider<String>((ref) => "");
 final hymnSortModeProvider = StateProvider<String>((ref) => 'Numerical');
 final hymnFontSizeProvider = StateProvider<double>((ref) => 18.0);
 
-
 // --- 2. BASE DATA PROVIDER ---
 final allHymnsProvider = FutureProvider<List<Hymn>>((ref) async {
-  // Watch the language provider. If language changes, this re-runs!
   final selectedLanguage = ref.watch(hymnLanguageProvider);
   
   try {
-    // Load the specific JSON file for the selected language
     final String response = await rootBundle.loadString(selectedLanguage.assetPath);
     final List<dynamic> data = json.decode(response);
     return data.map((json) => Hymn.fromJson(json)).toList();
   } catch (e) {
-    // Return empty list instead of crashing, but log the error
-    print("Error loading ${selectedLanguage.label}: $e");
+    debugPrint("Error loading ${selectedLanguage.label}: $e");
     return [];
   }
 });
-
 
 // --- 3. LOGIC PROVIDER ---
 final filteredHymnsProvider = Provider<AsyncValue<List<Hymn>>>((ref) {
@@ -130,14 +125,12 @@ final filteredHymnsProvider = Provider<AsyncValue<List<Hymn>>>((ref) {
   final sortMode = ref.watch(hymnSortModeProvider);
 
   return allHymnsAsync.whenData((hymns) {
-    // FILTER
     List<Hymn> filtered = hymns.where((h) {
       return h.id.toString().contains(search) ||
           h.title.toLowerCase().contains(search) ||
-          h.lyrics.toLowerCase().contains(search); // Also search lyrics
+          h.lyrics.toLowerCase().contains(search);
     }).toList();
 
-    // SORT
     if (sortMode == 'Alphabet') {
       filtered.sort((a, b) => a.title.compareTo(b.title));
     } else if (sortMode == 'Numerical') {
@@ -168,63 +161,119 @@ final keepScreenOnProvider = StateProvider<bool>((ref) {
 
 // --- 5. AUDIO PLAYER PROVIDER ---
 final audioProvider = StateNotifierProvider<AudioNotifier, AudioState>((ref) {
-  return AudioNotifier();
+  // We pass 'ref' to the notifier so it can check the current language
+  return AudioNotifier(ref);
 });
 
 class AudioNotifier extends StateNotifier<AudioState> {
+  final Ref ref; // ✅ Access to read other providers
   final AudioPlayer _player = AudioPlayer();
+  
+  // MIDI MAPPING LOGIC
+  Map<int, String> _midiFiles = {};
+  bool _isMapLoaded = false;
 
-  AudioNotifier() : super(AudioState()) {
+  AudioNotifier(this.ref) : super(AudioState()) {
+    _initListeners();
+    // Don't load immediately; load when first needed to save resources
+  }
+
+  void _initListeners() {
     _player.onPositionChanged.listen((p) {
-      state = _updateState(position: p);
+      if (mounted) state = state.copyWith(position: p);
     });
     _player.onDurationChanged.listen((d) {
-      state = _updateState(duration: d);
+      if (mounted) state = state.copyWith(duration: d);
     });
     _player.onPlayerStateChanged.listen((s) {
-      state = _updateState(isPlaying: s == PlayerState.playing);
+      if (mounted) state = state.copyWith(isPlaying: s == PlayerState.playing);
     });
-
     _player.onPlayerComplete.listen((_) {
-      state = _updateState(isPlaying: false, position: Duration.zero);
+      if (mounted) state = state.copyWith(isPlaying: false, position: Duration.zero);
     });
   }
 
-  AudioState _updateState({
-    Hymn? currentHymn,
-    bool? isPlaying,
-    Duration? position,
-    Duration? duration,
-  }) {
-    return AudioState(
-      currentHymn: currentHymn ?? state.currentHymn,
-      isPlaying: isPlaying ?? state.isPlaying,
-      position: position ?? state.position,
-      duration: duration ?? state.duration,
-    );
+  // ✅ NEW: Uses AssetManifest class (Fixes the "Unable to load asset" error)
+  Future<void> _loadMidiFiles() async {
+    try {
+      // Modern way to load assets in newer Flutter versions
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final assets = manifest.listAssets();
+
+      // Filter for files inside assets/midi/
+      final midiPaths = assets.where((path) => path.contains('assets/midi/')).toList();
+
+      for (var path in midiPaths) {
+        final filename = path.split('/').last; // e.g., "SAH001_Title.MID"
+        
+        // Regex: Find "SAH" followed by digits (e.g. SAH001)
+        final match = RegExp(r'SAH(\d+)').firstMatch(filename);
+        
+        if (match != null) {
+          final id = int.parse(match.group(1)!);
+          _midiFiles[id] = path;
+        }
+      }
+      _isMapLoaded = true;
+      debugPrint("Midi Map Loaded: Found ${_midiFiles.length} files.");
+    } catch (e) {
+      debugPrint("Error loading midi manifest: $e");
+    }
   }
 
-  Future<void> playHymn(Hymn hymn) async {
+  Future<bool> playHymn(Hymn hymn) async {
     try {
-      if (state.currentHymn?.id == hymn.id) {
-        state.isPlaying ? await _player.pause() : await _player.resume();
-      } else {
-        await _player.stop();
-        state = AudioState(currentHymn: hymn);
-        
-        // Note: Assumes audio files are named 'hymn_1.mp3', 'hymn_2.mp3', etc.
-        // If local languages have different audio, you might need logic here.
-        await _player.play(AssetSource('audio/hymn_${hymn.id}.mp3'));
+      // 1. ✅ CHECK LANGUAGE: If not English, stop immediately
+      final currentLang = ref.read(hymnLanguageProvider);
+      if (currentLang != HymnLanguage.english) {
+        debugPrint("Skipping audio: MIDI only available for English.");
+        return false;
       }
+
+      // 2. Toggle if same hymn
+      if (state.currentHymn?.id == hymn.id) {
+        await togglePlay();
+        return true; 
+      }
+
+      // 3. Ensure Map is Loaded
+      if (!_isMapLoaded) await _loadMidiFiles();
+
+      // 4. Find File
+      String? fullPath = _midiFiles[hymn.id];
+
+      if (fullPath == null) {
+        debugPrint("EXCEPTION: Audio missing for Hymn #${hymn.id}");
+        return false; 
+      }
+
+      // 5. Clean Path for AudioPlayer (Remove 'assets/' prefix if present)
+      if (fullPath.startsWith('assets/')) {
+        fullPath = fullPath.substring(7);
+      }
+
+      // 6. Play
+      await _player.stop();
+      await _player.play(AssetSource(fullPath));
+      
+      state = state.copyWith(currentHymn: hymn, isPlaying: true);
+      return true; // Success!
+
     } catch (e) {
-      state = AudioState();
-      print("Audio file missing for hymn ${hymn.id}");
+      debugPrint("Error playing audio: $e");
+      return false; 
     }
   }
 
   Future<void> togglePlay() async {
     if (state.currentHymn == null) return;
     state.isPlaying ? await _player.pause() : await _player.resume();
+  }
+
+  Future<void> stop() async {
+    await _player.stop();
+    // Setting currentHymn to null hides the MiniPlayer
+    state = AudioState();
   }
 
   @override

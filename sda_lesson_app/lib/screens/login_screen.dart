@@ -142,8 +142,9 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       } on FirebaseAuthException catch (e) {
         String message = "Login failed. Please try again.";
-        if (e.code == 'user-not-found') message = 'No user found for that email.';
-        else if (e.code == 'wrong-password') message = 'Wrong password provided.';
+        if (e.code == 'user-not-found') {
+          message = 'No user found for that email.';
+        } else if (e.code == 'wrong-password') message = 'Wrong password provided.';
         else if (e.code == 'invalid-email') message = 'The email address is invalid.';
         else if (e.code == 'user-disabled') message = 'This user account has been disabled.';
         else if (e.code == 'invalid-credential') message = 'Invalid email or password.';

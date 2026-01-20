@@ -292,6 +292,7 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
 }
 
 // --- SEARCH DELEGATE ---
+// --- SEARCH DELEGATE ---
 class BibleSearchDelegate extends SearchDelegate {
   final BibleApiService api;
   BibleSearchDelegate({required this.api});
@@ -343,13 +344,17 @@ class BibleSearchDelegate extends SearchDelegate {
                 overflow: TextOverflow.ellipsis,
               ),
               onTap: () {
+                // ✅ SAFELY PARSE VERSE NUMBER
+                // This handles cases where the DB returns "1" (String) or 1 (int)
+                int? targetVerse = int.tryParse(item['verseNum'].toString());
+
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => BibleReaderScreen(
                       chapterId: item['chapterId'],
                       reference: item['reference'],
-                      targetVerse: item['verseNum'] as int?,
+                      targetVerse: targetVerse, // Now guaranteed to be an int
                     ),
                   ),
                 );
