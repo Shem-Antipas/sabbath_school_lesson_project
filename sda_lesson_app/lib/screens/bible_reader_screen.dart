@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // REQUIRED FOR CLIPBOARD
+import 'package:flutter/services.dart'; 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../services/bible_api_service.dart';
+import '../providers/bible_provider.dart';
 
-class BibleReaderScreen extends StatefulWidget {
-  final String chapterId;
-  final String reference;
+class BibleReaderScreen extends ConsumerStatefulWidget {
+  final String chapterId;  // Standard ID (e.g. "Gen.1")
+  final String reference;  // Initial Display Name (e.g. "Genesis 1")
   final int? targetVerse;
 
   const BibleReaderScreen({
@@ -16,139 +18,166 @@ class BibleReaderScreen extends StatefulWidget {
   });
 
   @override
-  State<BibleReaderScreen> createState() => _BibleReaderScreenState();
+  ConsumerState<BibleReaderScreen> createState() => _BibleReaderScreenState();
 }
 
-class _BibleReaderScreenState extends State<BibleReaderScreen> {
+class _BibleReaderScreenState extends ConsumerState<BibleReaderScreen> {
   final BibleApiService _api = BibleApiService();
   late Future<List<Map<String, String>>> _versesFuture;
-  final ItemPositionsListener _itemPositionsListener =
-      ItemPositionsListener.create();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
 
   double _fontSize = 18.0;
-
-  // CHANGED: Use a Set to store multiple selected verse INDICES
-  final Set<int> _selectedIndices = {};
-
-  // Store loaded verses so we can access them for copying without re-fetching
+  final Set<int> _selectedIndices = {}; 
   List<Map<String, String>> _loadedVerses = [];
+  
+  // ✅ NEW: Dynamic Title State
+  late String _currentReference; 
 
   @override
   void initState() {
     super.initState();
-    // Debug print to confirm ID is receiving correctly
-    debugPrint("BibleReader Loading: ${widget.chapterId}");
-    _versesFuture = _api.fetchChapterVerses(widget.chapterId);
+    _currentReference = widget.reference; // Set initial title
+
+    final initialVersion = ref.read(bibleVersionProvider);
+    _versesFuture = _api.fetchChapterVerses(widget.chapterId, version: initialVersion);
   }
 
   // --- MULTI-COPY FUNCTION ---
   void _copySelectedVerses() {
     if (_selectedIndices.isEmpty || _loadedVerses.isEmpty) return;
 
-    // 1. Sort indices so verses copy in order (e.g. 1, 2, 3...)
     final sortedIndices = _selectedIndices.toList()..sort();
-
-    // 2. Build the copy string
     StringBuffer buffer = StringBuffer();
 
-    // Logic to create a nice reference string (e.g., "Gen 1:1-5")
+    // Get reference ranges
     String firstVerseNum = _loadedVerses[sortedIndices.first]['number'] ?? "";
     String lastVerseNum = _loadedVerses[sortedIndices.last]['number'] ?? "";
-    String refString = widget.reference;
-
-    // Remove the specific verse from reference if it exists (clean up title)
-    // e.g. "Psalm 23:1" -> "Psalm 23"
+    
+    // Clean up reference string (remove old chapter numbers if needed)
+    String refString = _currentReference;
     if (refString.contains(':')) {
-      refString = refString.split(':')[0];
+      refString = refString.split(':')[0]; 
     }
 
-    // If multiple verses, append the range to the reference
     if (sortedIndices.length > 1) {
-      // e.g. "Genesis 1:1-8"
       refString = "$refString:$firstVerseNum-$lastVerseNum";
     } else {
-      // e.g. "Genesis 1:1"
       refString = "$refString:$firstVerseNum";
     }
 
-    // 3. Add Verse Texts
+    final currentVersion = ref.read(bibleVersionProvider);
+    refString = "$refString (${currentVersion.label})";
+
     for (int index in sortedIndices) {
       final verse = _loadedVerses[index];
       final num = verse['number'] ?? "";
       final text = verse['text'] ?? "";
-
-      // Format: [8] And the sons of Ethan...
       buffer.write("[$num] $text\n");
     }
 
-    // 4. Append Reference at the bottom
-    buffer.write("\n($refString)");
+    buffer.write("\n$refString");
 
-    // 5. Send to Clipboard
     Clipboard.setData(ClipboardData(text: buffer.toString()));
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("Copied ${sortedIndices.length} verses to clipboard"),
+        content: Text("Copied ${sortedIndices.length} verses"),
         duration: const Duration(seconds: 2),
       ),
     );
 
-    // Optional: Clear selection after copy
     setState(() {
       _selectedIndices.clear();
     });
   }
 
+  // ✅ HELPER: Update Title when Version Changes
+  Future<void> _updateReferenceTitle(BibleVersion version) async {
+    // 1. Extract Book ID from "Gen.1"
+    final parts = widget.chapterId.split('.');
+    if (parts.length < 2) return;
+    
+    final bookId = parts[0]; // "Gen"
+    final chapterNum = parts[1]; // "1"
+
+    // 2. Fetch all books for the NEW version
+    final books = await _api.fetchBooks(version: version);
+    
+    // 3. Find the matching book name (e.g., "Chakruok")
+    final match = books.firstWhere(
+      (b) => b['id'] == bookId, 
+      orElse: () => {'name': widget.reference.split(' ')[0]} // Fallback
+    );
+
+    // 4. Update State
+    if (mounted) {
+      setState(() {
+        _currentReference = "${match['name']} $chapterNum";
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark ? Colors.black : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black;
+    // Listen for version changes
+    ref.listen<BibleVersion>(bibleVersionProvider, (previous, next) {
+      setState(() {
+        _versesFuture = _api.fetchChapterVerses(widget.chapterId, version: next);
+        _selectedIndices.clear(); 
+      });
+      // ✅ Update the App Bar Title (Genesis -> Chakruok)
+      _updateReferenceTitle(next);
+    });
 
-    // Highlights
-    final searchHighlight = isDark
-        ? const Color(0xFF2C3E50)
-        : const Color(0xFFFFF9C4);
-    final selectionHighlight = isDark
-        ? const Color(0xFF3E2723)
-        : const Color(0xFFFFE0B2);
+    final currentVersion = ref.watch(bibleVersionProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black;
+    final selectionHighlight = isDark ? const Color(0xFF3E2723) : const Color(0xFFFFE0B2);
+    final searchHighlight = isDark ? const Color(0xFF263238) : const Color(0xFFFFF9C4);
 
     final bool hasSelection = _selectedIndices.isNotEmpty;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
-        // Show selection count if selecting, otherwise show Chapter Title
         title: hasSelection
-            ? Text(
-                "${_selectedIndices.length} Selected",
-                style: const TextStyle(fontSize: 18),
-              )
-            : Text(widget.reference),
+            ? Text("${_selectedIndices.length} Selected", style: const TextStyle(fontSize: 18))
+            : Column(
+                children: [
+                  // ✅ Use Dynamic Title Here
+                  Text(_currentReference, style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+                  Text(
+                    currentVersion.label,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w300, color: textColor.withOpacity(0.7)),
+                  ),
+                ],
+              ),
+        centerTitle: true,
         backgroundColor: backgroundColor,
-        foregroundColor: textColor,
+        iconTheme: IconThemeData(color: textColor),
         elevation: 0,
         leading: hasSelection
             ? IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => setState(() => _selectedIndices.clear()),
               )
-            : null, // Default back button
+            : null,
         actions: [
-          // 1. COPY BUTTON (Visible when verses selected)
           if (hasSelection)
             IconButton(
               icon: const Icon(Icons.copy),
               tooltip: "Copy Selection",
               onPressed: _copySelectedVerses,
             ),
-
-          // 2. TEXT SIZE BUTTON
+          IconButton(
+            icon: const Icon(Icons.translate),
+            tooltip: "Switch Version",
+            onPressed: () => _showVersionSheet(context),
+          ),
           IconButton(
             icon: const Icon(Icons.text_fields),
-            onPressed: () =>
-                setState(() => _fontSize = _fontSize == 18.0 ? 22.0 : 18.0),
+            onPressed: () => setState(() => _fontSize = _fontSize == 18.0 ? 22.0 : 18.0),
           ),
         ],
       ),
@@ -158,60 +187,34 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           } else if (snapshot.hasError || !snapshot.hasData) {
-            return Center(
-              child: Text(
-                "Error loading chapter.",
-                style: TextStyle(color: textColor),
-              ),
-            );
+            return Center(child: Text("Error loading content.", style: TextStyle(color: textColor)));
           }
 
           _loadedVerses = snapshot.data!;
           final verses = _loadedVerses;
-          
-          // ✅ SAFETY CHECK: Handle Empty Chapter
+
           if (verses.isEmpty) {
-             return Center(
-              child: Text(
-                "Chapter content not found.",
-                style: TextStyle(color: textColor),
-              ),
-            );
+            return Center(child: Text("Content not found for this version.", style: TextStyle(color: textColor)));
           }
 
-          // ✅ CRITICAL FIX: Safe Index Calculation
-          // Previous code crashed if verses.isEmpty or targetVerse was invalid
+          // Auto-scroll logic
           int initialIndex = 0;
           if (widget.targetVerse != null && verses.isNotEmpty) {
-             // Convert verse number (e.g. 1) to index (0)
-             // Ensure we don't crash by clamping between 0 and length-1
-             initialIndex = (widget.targetVerse! - 1).clamp(
-              0,
-              verses.length - 1,
-            );
+            initialIndex = (widget.targetVerse! - 1).clamp(0, verses.length - 1);
           }
 
           return ScrollablePositionedList.builder(
             itemCount: verses.length,
             itemPositionsListener: _itemPositionsListener,
             initialScrollIndex: initialIndex,
-            padding: const EdgeInsets.fromLTRB(
-              16,
-              8,
-              16,
-              80,
-            ), // Extra padding for FAB if needed
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
             itemBuilder: (context, index) {
               final verse = verses[index];
               final verseNum = verse['number'] ?? "0";
               final verseText = verse['text'] ?? "";
-              final verseNumInt = int.tryParse(verseNum) ?? 0;
-
-              // Determine State
-              final isSearchTarget =
-                  widget.targetVerse != null &&
-                  verseNumInt == widget.targetVerse;
+              
               final isSelected = _selectedIndices.contains(index);
+              final isSearchTarget = widget.targetVerse != null && (int.tryParse(verseNum) == widget.targetVerse);
 
               return GestureDetector(
                 onTap: () {
@@ -227,20 +230,12 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    // If selected, override search highlight
-                    color: isSelected
-                        ? selectionHighlight
-                        : (isSearchTarget
-                              ? searchHighlight
-                              : Colors.transparent),
+                    color: isSelected 
+                        ? selectionHighlight 
+                        : (isSearchTarget ? searchHighlight : Colors.transparent),
                     borderRadius: BorderRadius.circular(8),
                     border: isSelected || isSearchTarget
-                        ? Border.all(
-                            color: isSelected
-                                ? Colors.orange
-                                : Colors.orange.withOpacity(0.5),
-                            width: isSelected ? 2 : 1,
-                          )
+                        ? Border.all(color: Colors.orange, width: isSelected ? 2 : 1)
                         : null,
                   ),
                   child: RichText(
@@ -259,7 +254,7 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
                               "$verseNum ",
                               style: TextStyle(
                                 fontSize: _fontSize * 0.6,
-                                color: isSelected ? Colors.orange : Colors.grey,
+                                color: Colors.orange,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -275,18 +270,54 @@ class _BibleReaderScreenState extends State<BibleReaderScreen> {
           );
         },
       ),
-      // Optional: Add a Floating Action Button for easy Copying if selection exists
       floatingActionButton: hasSelection
           ? FloatingActionButton.extended(
               onPressed: _copySelectedVerses,
               backgroundColor: const Color(0xFF7D2D3B),
               icon: const Icon(Icons.copy, color: Colors.white),
-              label: Text(
-                "Copy (${_selectedIndices.length})",
-                style: const TextStyle(color: Colors.white),
-              ),
+              label: Text("Copy (${_selectedIndices.length})", style: const TextStyle(color: Colors.white)),
             )
           : null,
+    );
+  }
+
+  void _showVersionSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final current = ref.watch(bibleVersionProvider);
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("Select Version", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Divider(),
+                  Expanded(
+                    child: ListView(
+                      children: BibleVersion.values.map((version) {
+                        return ListTile(
+                          title: Text(version.label),
+                          subtitle: Text(version == BibleVersion.kjv ? "Standard Edition" : "Offline Translation"),
+                          trailing: current == version ? const Icon(Icons.check_circle, color: Color(0xFF7D2D3B)) : null,
+                          onTap: () {
+                            ref.read(bibleVersionProvider.notifier).state = version;
+                            Navigator.pop(context);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        );
+      },
     );
   }
 }

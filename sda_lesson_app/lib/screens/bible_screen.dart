@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
 import 'bible_reader_screen.dart';
-import 'bible_chapter_screen.dart'; // Required for navigation fix
+import 'bible_chapter_screen.dart'; 
+import '../providers/bible_provider.dart'; 
 
 class BibleScreen extends ConsumerStatefulWidget {
-  // NEW: Optional parameters for Deep Linking (e.g., from Daily Verse)
+  // Optional parameters for Deep Linking
   final String? initialBook;
   final int? initialChapter;
   final int? targetVerse;
@@ -22,6 +23,7 @@ class BibleScreen extends ConsumerStatefulWidget {
 }
 
 class _BibleScreenState extends ConsumerState<BibleScreen> {
+  // Initialize the API Service
   final BibleApiService _apiService = BibleApiService();
   late Future<List<Map<String, dynamic>>> _booksFuture;
 
@@ -29,8 +31,6 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
   int _selectedFilterIndex = 0;
 
   // --- STRICT OT FILTER LIST ---
-  // Using this Set ensures we filter accurately even if books are missing from the DB.
-  // The IDs match the keys in your BibleApiService.
   static const Set<String> _otBookIds = {
     'Gen', 'Exod', 'Lev', 'Num', 'Deut', 'Josh', 'Judg', 'Ruth',
     '1Sam', '2Sam', '1Kgs', '2Kgs', '1Chr', '2Chr', 'Ezra', 'Neh', 'Esth',
@@ -42,22 +42,21 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
   @override
   void initState() {
     super.initState();
-    // fetchBooks already returns them in Chronological Order (Gen -> Rev)
-    _booksFuture = _apiService.fetchBooks();
+    // Load books initially (Defaults to KJV English names)
+    final initialVersion = ref.read(bibleVersionProvider);
+    _booksFuture = _apiService.fetchBooks(version: initialVersion);
 
-    // NEW: Check for Deep Link Navigation immediately
+    // Check for Deep Link Navigation immediately
     if (widget.initialBook != null && widget.initialChapter != null) {
       _handleDeepLink();
     }
   }
 
-  // --- NEW: Handle automatic navigation to a verse ---
+  // --- Handle automatic navigation to a verse ---
   Future<void> _handleDeepLink() async {
-    // Wait slightly for UI to settle
     await Future.delayed(const Duration(milliseconds: 100));
 
     try {
-      // Re-fetch books to resolve the Book Name (e.g. "Genesis") to ID (e.g. "Gen")
       final books = await _apiService.fetchBooks();
       
       final targetBook = books.firstWhere(
@@ -67,18 +66,16 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
 
       if (targetBook.isNotEmpty) {
         String bookId = targetBook['id'];
-        // Construct Chapter ID (e.g., "Gen.1")
         String chapterId = "$bookId.${widget.initialChapter}";
 
         if (mounted) {
-          // Navigate directly to Reader
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => BibleReaderScreen(
                 chapterId: chapterId,
                 reference: "${widget.initialBook} ${widget.initialChapter}",
-                targetVerse: widget.targetVerse, // Highlight this verse
+                targetVerse: widget.targetVerse, 
               ),
             ),
           );
@@ -91,21 +88,41 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ 1. WATCH THE SELECTED VERSION
+    final currentVersion = ref.watch(bibleVersionProvider);
+
+    // ✅ 2. LISTEN FOR VERSION CHANGES (Logic Added Here)
+    // This forces the book list (Genesis -> Chakruok) to update immediately
+    ref.listen<BibleVersion>(bibleVersionProvider, (previous, next) {
+      setState(() {
+        _booksFuture = _apiService.fetchBooks(version: next);
+      });
+    });
+
     // Theme Logic
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF7F4F2);
+    final backgroundColor = isDark ? const Color(0xFF121212) : const Color(0xFFF7F4F2);
     const activeColor = Color(0xFF7D2D3B);
-    final Color inactiveColor = isDark
-        ? (Colors.grey[800] ?? Colors.grey)
-        : (Colors.grey[300] ?? Colors.grey);
+    final Color inactiveColor = isDark ? (Colors.grey[800] ?? Colors.grey) : (Colors.grey[300] ?? Colors.grey);
     final textColor = isDark ? Colors.white : Colors.black;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
-        title: Text("Holy Bible", style: TextStyle(color: textColor)),
+        // ✅ 3. TITLE SHOWS VERSION LABEL
+        title: Column(
+          children: [
+            Text("Holy Bible", style: TextStyle(color: textColor)),
+            Text(
+              currentVersion.label, // e.g., "Dholuo"
+              style: TextStyle(
+                color: textColor.withOpacity(0.7),
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
         backgroundColor: backgroundColor,
         elevation: 0,
@@ -115,11 +132,21 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
             icon: const Icon(Icons.search),
             tooltip: "Search Bible",
             onPressed: () {
+              // ✅ Pass the current version to the search delegate
               showSearch(
                 context: context,
-                delegate: BibleSearchDelegate(api: _apiService),
+                delegate: BibleSearchDelegate(
+                  api: _apiService, 
+                  searchVersion: currentVersion, 
+                ), 
               );
             },
+          ),
+          // ✅ 4. TRANSLATE BUTTON
+          IconButton(
+            icon: const Icon(Icons.translate),
+            tooltip: "Switch Version",
+            onPressed: () => _showVersionSheet(context),
           ),
         ],
       ),
@@ -132,21 +159,9 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
               children: [
                 _buildFilterTab("All", 0, activeColor, inactiveColor, isDark),
                 const SizedBox(width: 10),
-                _buildFilterTab(
-                  "Old Testament",
-                  1,
-                  activeColor,
-                  inactiveColor,
-                  isDark,
-                ),
+                _buildFilterTab("Old Testament", 1, activeColor, inactiveColor, isDark),
                 const SizedBox(width: 10),
-                _buildFilterTab(
-                  "New Testament",
-                  2,
-                  activeColor,
-                  inactiveColor,
-                  isDark,
-                ),
+                _buildFilterTab("New Testament", 2, activeColor, inactiveColor, isDark),
               ],
             ),
           ),
@@ -166,28 +181,18 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
                 final allBooks = snapshot.data ?? [];
                 List<Map<String, dynamic>> displayedBooks = [];
 
-                // --- ROBUST FILTERING LOGIC ---
+                // Logic to filter OT vs NT
                 if (_selectedFilterIndex == 0) {
-                  // ALL
                   displayedBooks = allBooks;
                 } else if (_selectedFilterIndex == 1) {
-                  // OT
-                  displayedBooks = allBooks
-                      .where((b) => _otBookIds.contains(b['id']))
-                      .toList();
+                  displayedBooks = allBooks.where((b) => _otBookIds.contains(b['id'])).toList();
                 } else {
-                  // NT
-                  displayedBooks = allBooks
-                      .where((b) => !_otBookIds.contains(b['id']))
-                      .toList();
+                  displayedBooks = allBooks.where((b) => !_otBookIds.contains(b['id'])).toList();
                 }
 
                 if (displayedBooks.isEmpty) {
                   return Center(
-                    child: Text(
-                      "No books found.",
-                      style: TextStyle(color: textColor),
-                    ),
+                    child: Text("No books found.", style: TextStyle(color: textColor)),
                   );
                 }
 
@@ -201,37 +206,25 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
                     final book = displayedBooks[index];
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: isDark
-                            ? Colors.grey[800]
-                            : const Color(0xFFE0E7FF),
+                        backgroundColor: isDark ? Colors.grey[800] : const Color(0xFFE0E7FF),
                         child: Text(
                           book['abbreviation'] ?? "Bk",
                           style: TextStyle(
                             fontSize: 10,
-                            color: isDark
-                                ? Colors.white
-                                : const Color(0xFF1A237E),
+                            color: isDark ? Colors.white : const Color(0xFF1A237E),
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
                       title: Text(
-                        book['name'],
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: textColor,
-                        ),
+                        book['name'], // ✅ Displays "Chakruok" if Luo is selected
+                        style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
                       ),
                       subtitle: Text(
                         book['nameLong'] ?? "",
-                        style: TextStyle(
-                          color: isDark ? Colors.grey[400] : Colors.grey[600],
-                        ),
+                        style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
                       ),
-                      trailing: Icon(
-                        Icons.chevron_right,
-                        color: isDark ? Colors.grey : Colors.grey[400],
-                      ),
+                      trailing: Icon(Icons.chevron_right, color: isDark ? Colors.grey : Colors.grey[400]),
                       onTap: () {
                         Navigator.push(
                           context,
@@ -254,16 +247,9 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
     );
   }
 
-  // Helper for the Pill Tabs
-  Widget _buildFilterTab(
-    String label,
-    int index,
-    Color activeColor,
-    Color inactiveColor,
-    bool isDark,
-  ) {
+  // Helper Widget for Tabs
+  Widget _buildFilterTab(String label, int index, Color activeColor, Color inactiveColor, bool isDark) {
     final bool isSelected = _selectedFilterIndex == index;
-
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _selectedFilterIndex = index),
@@ -280,22 +266,72 @@ class _BibleScreenState extends ConsumerState<BibleScreen> {
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 12,
-              color: isSelected
-                  ? Colors.white
-                  : (isDark ? Colors.grey[400] : Colors.black54),
+              color: isSelected ? Colors.white : (isDark ? Colors.grey[400] : Colors.black54),
             ),
           ),
         ),
       ),
     );
   }
+
+  // ✅ 5. BOTTOM SHEET FOR SELECTING VERSIONS
+  void _showVersionSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final current = ref.watch(bibleVersionProvider);
+            
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    "Select Bible Version",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+                  const Divider(),
+                  Expanded(
+                    child: ListView(
+                      children: BibleVersion.values.map((version) {
+                        final isSelected = current == version;
+                        return ListTile(
+                          title: Text(version.label, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(version == BibleVersion.kjv ? "Standard Edition" : "Offline Translation"),
+                          trailing: isSelected 
+                              ? const Icon(Icons.check_circle, color: Color(0xFF7D2D3B)) 
+                              : null,
+                          onTap: () {
+                            ref.read(bibleVersionProvider.notifier).state = version;
+                            Navigator.pop(context);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        );
+      },
+    );
+  }
 }
 
 // --- SEARCH DELEGATE ---
-// --- SEARCH DELEGATE ---
 class BibleSearchDelegate extends SearchDelegate {
   final BibleApiService api;
-  BibleSearchDelegate({required this.api});
+  final BibleVersion searchVersion;
+  
+  BibleSearchDelegate({required this.api, required this.searchVersion});
 
   @override
   List<Widget>? buildActions(BuildContext context) => [
@@ -315,13 +351,14 @@ class BibleSearchDelegate extends SearchDelegate {
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: api.searchBible(query, bookId: 'ALL'),
+      // ✅ CRITICAL FIX: Use the selected version for searching
+      future: api.searchBible(query, bookId: 'ALL', version: searchVersion),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
-          return const Center(child: Text("No verses found."));
+          return Center(child: Text("No results found in ${searchVersion.label}."));
         }
 
         final results = snapshot.data!;
@@ -344,8 +381,6 @@ class BibleSearchDelegate extends SearchDelegate {
                 overflow: TextOverflow.ellipsis,
               ),
               onTap: () {
-                // ✅ SAFELY PARSE VERSE NUMBER
-                // This handles cases where the DB returns "1" (String) or 1 (int)
                 int? targetVerse = int.tryParse(item['verseNum'].toString());
 
                 Navigator.push(
@@ -354,7 +389,7 @@ class BibleSearchDelegate extends SearchDelegate {
                     builder: (context) => BibleReaderScreen(
                       chapterId: item['chapterId'],
                       reference: item['reference'],
-                      targetVerse: targetVerse, // Now guaranteed to be an int
+                      targetVerse: targetVerse,
                     ),
                   ),
                 );
@@ -368,12 +403,13 @@ class BibleSearchDelegate extends SearchDelegate {
 
   @override
   Widget buildSuggestions(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.menu_book, size: 60, color: Colors.grey),
-        SizedBox(height: 10),
-        Text("Search for keywords like 'Grace', 'Sabbath', 'Love'"),
+        const Icon(Icons.menu_book, size: 60, color: Colors.grey),
+        const SizedBox(height: 10),
+        // ✅ UX: Shows the user what version they are searching
+        Text("Searching in ${searchVersion.label}"),
       ],
     );
   }

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bible_api_service.dart';
+import '../providers/bible_provider.dart';
 import 'bible_reader_screen.dart';
 import 'bible_verse_screen.dart'; 
 import '../services/analytics_service.dart';
 
 class BibleChapterScreen extends ConsumerWidget {
-  final String bookId;
-  final String bookName;
+  final String bookId;    // Standard ID (e.g., "Gen", "Exod")
+  final String bookName;  // Localized Name (e.g., "Mwanzo", "Wuok")
 
   const BibleChapterScreen({
     super.key,
@@ -17,17 +18,19 @@ class BibleChapterScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Single instance for efficiency
+    final BibleApiService apiService = BibleApiService();
+
     // Theme Logic
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFFBFBFD);
+    final backgroundColor = isDark ? const Color(0xFF121212) : const Color(0xFFFBFBFD);
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        // ✅ TITLE: Displays Localized Name ("Mwanzo")
         title: Text(bookName, style: TextStyle(color: textColor)),
         centerTitle: true,
         backgroundColor: backgroundColor,
@@ -37,10 +40,16 @@ class BibleChapterScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () {
+              // ✅ Get current version from provider (e.g., Luo, Swahili)
+              final currentVersion = ref.read(bibleVersionProvider);
+              
               showSearch(
                 context: context,
                 delegate: BibleSearchDelegate(
-                  initialBookId: bookId,
+                  api: apiService,
+                  searchVersion: currentVersion, 
+                  // ✅ Pass Standard ID to filter DB queries correctly
+                  initialBookId: bookId, 
                   initialBookName: bookName,
                 ),
               );
@@ -49,24 +58,25 @@ class BibleChapterScreen extends ConsumerWidget {
         ],
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: BibleApiService().fetchChapters(bookId),
+        // ✅ API CALL: Uses Standard ID ("Gen") to fetch chapters
+        future: apiService.fetchChapters(bookId),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
             return Center(
-              child: Text(
-                "Error: ${snapshot.error}",
-                style: TextStyle(color: textColor),
-              ),
+              child: Text("Error loading chapters.", style: TextStyle(color: textColor)),
             );
           }
 
           final chapters = snapshot.data ?? [];
-          final filteredChapters = chapters
-              .where((c) => c['number'] != 'intro')
-              .toList();
+          // Remove non-numeric chapters if any exist (e.g., "intro")
+          final filteredChapters = chapters.where((c) => int.tryParse(c['number'].toString()) != null).toList();
+
+          if (filteredChapters.isEmpty) {
+             return Center(child: Text("No chapters found.", style: TextStyle(color: textColor)));
+          }
 
           return GridView.builder(
             padding: const EdgeInsets.all(16),
@@ -78,21 +88,24 @@ class BibleChapterScreen extends ConsumerWidget {
             itemCount: filteredChapters.length,
             itemBuilder: (context, index) {
               final chapter = filteredChapters[index];
+              final chapterNum = chapter['number'].toString();
 
               return InkWell(
                 onTap: () {
-         AnalyticsService().logReadBible(
-      book: bookName,
-      chapter: int.parse(chapter['number'].toString()), 
-    );      // Navigate to Verse Selection
+                  AnalyticsService().logReadBible(
+                    book: bookName, // Log readable name
+                    chapter: int.tryParse(chapterNum) ?? 1, 
+                  );      
+                  
+                  // Navigate to Verse Selection
                   Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => BibleVerseScreen(
-          bookId: bookId,
-          bookName: bookName,
-          chapterId: chapter['id'],
-          chapterNumber: chapter['number'],
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => BibleVerseScreen(
+                        bookId: bookId,       // Pass Standard ID ("Gen")
+                        bookName: bookName,   // Pass Display Name ("Mwanzo")
+                        chapterId: chapter['id'], // e.g., "Gen.1"
+                        chapterNumber: chapterNum,
                       ),
                     ),
                   );
@@ -114,7 +127,7 @@ class BibleChapterScreen extends ConsumerWidget {
                   ),
                   alignment: Alignment.center,
                   child: Text(
-                    chapter['number'],
+                    chapterNum,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
@@ -131,13 +144,16 @@ class BibleChapterScreen extends ConsumerWidget {
   }
 }
 
-// --- UPDATED SEARCH LOGIC ---
+// --- UPDATED SEARCH DELEGATE ---
 class BibleSearchDelegate extends SearchDelegate {
-  final String initialBookId;
-  final String initialBookName;
-  final BibleApiService _api = BibleApiService();
+  final BibleApiService api;
+  final BibleVersion searchVersion; 
+  final String initialBookId;   // Standard ID ("Gen")
+  final String initialBookName; // Display Name ("Mwanzo")
 
   BibleSearchDelegate({
+    required this.api, 
+    required this.searchVersion,
     required this.initialBookId,
     required this.initialBookName,
   });
@@ -160,14 +176,15 @@ class BibleSearchDelegate extends SearchDelegate {
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _api.searchBible(query, bookId: initialBookId),
+      // ✅ SEARCH: Filters by Standard ID ("Gen") in the selected Version
+      future: api.searchBible(query, bookId: initialBookId, version: searchVersion),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return Center(
-            child: Text("No results found in $initialBookName for '$query'"),
+            child: Text("No results for '$query' in $initialBookName"),
           );
         }
 
@@ -180,7 +197,7 @@ class BibleSearchDelegate extends SearchDelegate {
             final item = results[index];
             return ListTile(
               title: Text(
-                item['reference'] ?? "Unknown",
+                item['reference'] ?? "Unknown", // "Mwanzo 1:1"
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               subtitle: Text(
@@ -189,16 +206,14 @@ class BibleSearchDelegate extends SearchDelegate {
                 overflow: TextOverflow.ellipsis,
               ),
               onTap: () {
-                // ✅ THE FIX: Parse the verse number safely
                 int? targetVerse = int.tryParse(item['verseNum'].toString());
 
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => BibleReaderScreen(
-                      chapterId: item['chapterId'],
-                      reference: item['reference'],
-                      // ✅ PASS IT HERE: This triggers the auto-scroll
+                      chapterId: item['chapterId'], // "Gen.1"
+                      reference: item['reference'], // "Mwanzo 1:1"
                       targetVerse: targetVerse, 
                     ),
                   ),
@@ -218,7 +233,8 @@ class BibleSearchDelegate extends SearchDelegate {
       children: [
         const Icon(Icons.search, size: 50, color: Colors.grey),
         const SizedBox(height: 10),
-        Text("Searching in $initialBookName"),
+        // Display what we are searching (e.g. "Searching Mwanzo in Swahili")
+        Text("Searching $initialBookName in ${searchVersion.label}"),
       ],
     );
   }
