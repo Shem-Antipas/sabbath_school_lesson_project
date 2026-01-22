@@ -3,6 +3,8 @@ import 'package:flutter/services.dart'; // ✅ Required for Clipboard
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart'; 
 import '../providers/hymnal_provider.dart';
+// ✅ NEW: Import the MIDI player widget
+import '../widgets/hymn_midi_player.dart';
 
 class HymnDetailScreen extends ConsumerStatefulWidget {
   final Hymn initialHymn;
@@ -36,9 +38,8 @@ class _HymnDetailScreenState extends ConsumerState<HymnDetailScreen> {
     super.dispose();
   }
 
-  // ✅ NEW: Helper to Copy Text
+  // ✅ Helper to Copy Text (Logic preserved)
   void _copyToClipboard(Hymn hymn) {
-    // We use the same helper from your provider to get clean text without HTML tags
     String formattedLyrics = _formatForClipboard(hymn.htmlContent);
 
     String copyText = """
@@ -56,32 +57,22 @@ Shared from Advent Study Hub
     );
   }
 
-  // ✅ NEW: Smart helper that turns HTML tags into real newlines
+  // ✅ Smart helper that turns HTML tags into real newlines (Logic preserved)
   String _formatForClipboard(String content) {
-    // 1. If it's already plain text (no HTML), just return it.
     if (!content.contains("<")) {
       return content;
     }
 
     String processed = content;
-
-    // 2. Replace <br> variants with a single newline
     processed = processed.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
-
-    // 3. Replace Closing Paragraphs </p> and Divs </div> with Double Newline
     processed = processed.replaceAll(RegExp(r'</(p|div)>', caseSensitive: false), '\n\n');
-
-    // 4. Remove all remaining HTML tags (like <b>, <font>, <h1>)
     processed = processed.replaceAll(RegExp(r'<[^>]*>', multiLine: true, caseSensitive: true), '');
-
-    // 5. Cleanup: Remove extra whitespace/multiple newlines caused by the steps above
-    //    (Replaces 3+ newlines with just 2 to keep it tidy)
     processed = processed.replaceAll(RegExp(r'\n{3,}'), '\n\n');
 
     return processed.trim();
   }
 
-  // Helper to strip HTML locally if needed
+  // Helper to strip HTML locally (Logic preserved)
   String _stripHtml(String htmlString) {
     RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
     return htmlString.replaceAll(exp, '').trim();
@@ -98,7 +89,11 @@ Shared from Advent Study Hub
     final textColor = isDark ? Colors.white : Colors.black;
     final iconColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
 
+    // ✅ Get the hymn currently being viewed (updates on swipe)
     final currentHymn = widget.allHymns[_currentIndex];
+    
+    // ✅ Logic to determine if MIDI should show (Assumes Hymn model has 'language')
+    final bool showMidi = currentHymn.language == 'English';
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -114,7 +109,6 @@ Shared from Advent Study Hub
           style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
         ),
         actions: [
-          // ✅ NEW: COPY BUTTON
           IconButton(
             icon: Icon(Icons.copy, color: iconColor),
             tooltip: "Copy to Clipboard",
@@ -135,7 +129,7 @@ Shared from Advent Study Hub
           ),
         ],
       ),
-      // ✅ NEW: Wrap Body in SelectionArea to allow highlighting text
+      // Wrap Body in SelectionArea to allow highlighting text
       body: SelectionArea(
         child: PageView.builder(
           controller: _pageController,
@@ -151,6 +145,16 @@ Shared from Advent Study Hub
           },
         ),
       ),
+      // ✅ NEW: MIDI Player anchored to the bottom
+      // It updates dynamically based on 'currentHymn'
+      bottomNavigationBar: showMidi 
+        ? HymnMidiPlayer(
+            // Uses currentHymn.id for the filename (e.g. "1.mid")
+            midiUrl: "assets/audio/hymns/${currentHymn.id}.mid", 
+            hymnTitle: currentHymn.title,
+            hymnNumber: currentHymn.id.toString(),
+          )
+        : null, 
     );
   }
 
@@ -165,10 +169,9 @@ Shared from Advent Study Hub
           Text(
             hymn.title.toUpperCase(),
             textAlign: TextAlign.center,
-            style: TextStyle( // Removed 'const' to allow dynamic color
+            style: TextStyle( 
               fontSize: 24,
               fontWeight: FontWeight.w900,
-              // ✅ FIX: Use White in Dark Mode, Red in Light Mode
               color: isDark ? Colors.white : const Color(0xFF7D2D3B),
               letterSpacing: 1.5,
             ),
@@ -189,6 +192,7 @@ Shared from Advent Study Hub
               ? _buildHtmlContent(hymn.htmlContent, fontSize, isDark)
               : _buildPlainContent(hymn.htmlContent, fontSize, isDark),
 
+          // ✅ Padding to ensure player doesn't cover text
           const SizedBox(height: 120),
         ],
       ),
@@ -225,7 +229,6 @@ Shared from Advent Study Hub
   }
 
   void _showFontControl(BuildContext context, WidgetRef ref, bool isDark) {
-    // ... (Keep your existing Font Control code) ...
      showModalBottomSheet(
       context: context,
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,

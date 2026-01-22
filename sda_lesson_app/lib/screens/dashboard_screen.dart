@@ -18,6 +18,7 @@ import 'home_screen.dart';
 import 'lesson_list_screen.dart';
 import 'login_screen.dart';   
 import 'profile_screen.dart'; 
+import 'devotionals_library_screen.dart';
 
 // --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
@@ -714,11 +715,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
       },
       {
-        'title': 'Sermons',
+        'title': 'Devotionals',
         'img': 'assets/images/sermons.png',
-        'onTap': () => ScaffoldMessenger.of(
+        'onTap': () => Navigator.push(
           context,
-        ).showSnackBar(const SnackBar(content: Text("Sermons Coming Soon!"))),
+          MaterialPageRoute(builder: (c) => const DevotionalsLibraryScreen()),
+        ),
       },
     ];
 

@@ -35,6 +35,8 @@ dependencies:
   firebase_storage: ^11.6.5
   firebase_app_distribution: ^1.1.1
   firebase_analytics: ^10.10.7
+  just_audio: ^0.9.46
+  just_audio_background: ^0.0.1-beta.17
   
 
   # You can remove flutter_markdown as it isn't needed for this API
@@ -59,6 +61,8 @@ flutter:
     - assets/data/hymns_sw.json
     - assets/data/hymns_old_en.json
     - assets/images/
+    - assets/json/devotionals/  
+    - assets/images/devotionals/
     - assets/bible.db
     - assets/bibles/luo.json
     - assets/bibles/swahili.json

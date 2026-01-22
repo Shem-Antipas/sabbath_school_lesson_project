@@ -6,12 +6,37 @@ import 'screens/main_navigation.dart';
 import 'providers/theme_provider.dart';
 // ✅ NEW: Import for the "What's New" logic
 import 'utils/update_checker.dart'; 
+import 'package:just_audio_background/just_audio_background.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
   
-  // We wrap the app in ProviderScope as you already have
+  print("🚀 Starting App Initialization...");
+
+  try {
+    // 1. Initialize Firebase
+    print("🔥 Initializing Firebase...");
+    await Firebase.initializeApp();
+    print("✅ Firebase Initialized");
+  } catch (e) {
+    print("❌ Firebase Error: $e");
+  }
+
+  try {
+    // 2. Initialize Audio Background
+    // If AndroidManifest is wrong, this is usually where it hangs
+    print("🎵 Initializing Audio Background...");
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.ryanheise.bg_demo.channel.audio',
+      androidNotificationChannelName: 'Audio Playback',
+      androidNotificationOngoing: true,
+    );
+    print("✅ Audio Background Initialized");
+  } catch (e) {
+    print("❌ Audio Background Error: $e");
+  }
+
+  print("🏁 Running App...");
   runApp(const ProviderScope(child: MyApp()));
 }
 

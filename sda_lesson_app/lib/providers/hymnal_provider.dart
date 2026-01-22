@@ -27,6 +27,7 @@ class Hymn {
   final String lyrics;      
   final String htmlContent; 
   final String topic;
+  final String language;
 
   Hymn({
     required this.id,
@@ -34,6 +35,7 @@ class Hymn {
     required this.lyrics,
     required this.htmlContent,
     required this.topic,
+    this.language = "English",
   });
 
   factory Hymn.fromJson(Map<String, dynamic> json) {
