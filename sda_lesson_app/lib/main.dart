@@ -4,13 +4,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'screens/main_navigation.dart';
 import 'providers/theme_provider.dart';
-// ✅ NEW: Import for the "What's New" logic
-import 'utils/update_checker.dart'; 
+import 'utils/update_checker.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   print("🚀 Starting App Initialization...");
 
   try {
@@ -24,7 +23,6 @@ void main() async {
 
   try {
     // 2. Initialize Audio Background
-    // If AndroidManifest is wrong, this is usually where it hangs
     print("🎵 Initializing Audio Background...");
     await JustAudioBackground.init(
       androidNotificationChannelId: 'com.ryanheise.bg_demo.channel.audio',
@@ -51,9 +49,8 @@ class _MyAppState extends ConsumerState<MyApp> {
   @override
   void initState() {
     super.initState();
-    
-    // ✅ NEW: Trigger the "What's New" Dialog after the first frame
-    // This will check if the user has seen the v2.0.0 features yet.
+
+    // Trigger the "What's New" Dialog after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateChecker.checkAndShowUpdate(context);
     });
