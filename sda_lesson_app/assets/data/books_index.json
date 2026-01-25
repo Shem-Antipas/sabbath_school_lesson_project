@@ -82,5 +82,19 @@
     "author": "Ellen G. White",
     "cover_image": "assets/images/cet_cover.jpg",
     "file_path": "assets/data/cet.json"
+  },
+    {
+    "id": "chl",
+    "title": "Christian Leadership",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/chl_cover.jpg",
+    "file_path": "assets/data/chl.json"
+  },
+   {
+    "id": "col",
+    "title": "Christ Object lesson",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/col_cover.png",
+    "file_path": "assets/data/col.json"
   }
 ]

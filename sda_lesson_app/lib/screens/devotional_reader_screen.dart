@@ -74,7 +74,9 @@ class DevotionalReaderScreen extends ConsumerStatefulWidget {
 class _DevotionalReaderScreenState
     extends ConsumerState<DevotionalReaderScreen> {
   PageController? _pageController;
-  int _currentDay = 1;
+
+  // FIX: Make this late so we can init it in initState
+  late int _currentDay;
   bool _isInit = true;
 
   // Search Scrolling
@@ -88,8 +90,10 @@ class _DevotionalReaderScreenState
   @override
   void initState() {
     super.initState();
+    // FIX: Initialize _currentDay immediately with the passed initialDay
+    _currentDay = widget.initialDay;
+
     _loadUserHighlights();
-    // Save initial read progress
     _saveReadingProgress(widget.initialDay);
   }
 
@@ -188,6 +192,7 @@ class _DevotionalReaderScreenState
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
+        // FIX: This now uses the correctly initialized _currentDay
         title: Text(
           "${widget.monthName} $_currentDay",
           style: TextStyle(color: isDark ? Colors.white : Colors.black),
@@ -227,25 +232,33 @@ class _DevotionalReaderScreenState
           if (monthReadings.isEmpty)
             return const Center(child: Text("No content."));
 
+          // Initialize PageController only once
           if (_isInit) {
             int initialIndex = monthReadings.indexWhere(
               (r) => r.day == widget.initialDay,
             );
             if (initialIndex == -1) initialIndex = 0;
             _pageController = PageController(initialPage: initialIndex);
-            _currentDay = widget.initialDay;
+
+            // We do NOT set _currentDay here anymore because
+            // it was already set in initState.
+
             _isInit = false;
           }
 
           return PageView.builder(
             controller: _pageController,
             itemCount: monthReadings.length,
+            // FIX: Ensure setState is called here to rebuild the AppBar title
             onPageChanged: (index) {
-              setState(() {
-                _currentDay = monthReadings[index].day;
-                _currentSelection = null; // Reset selection on page change
-              });
-              _saveReadingProgress(_currentDay);
+              final newDay = monthReadings[index].day;
+              if (_currentDay != newDay) {
+                setState(() {
+                  _currentDay = newDay;
+                  _currentSelection = null;
+                });
+                _saveReadingProgress(_currentDay);
+              }
             },
             itemBuilder: (context, index) {
               final reading = monthReadings[index];
@@ -344,8 +357,6 @@ class _DevotionalReaderScreenState
                         padding: const EdgeInsets.only(bottom: 16.0),
                         child: Container(
                           key: containsSearch ? _highlightKey : null,
-                          // We use SelectableText.rich here instead of SelectionArea
-                          // to enable the custom Context Menu per paragraph
                           child: SelectableText.rich(
                             TextSpan(
                               children: _buildRichText(
@@ -371,7 +382,6 @@ class _DevotionalReaderScreenState
                               return AdaptiveTextSelectionToolbar(
                                 anchors: editableTextState.contextMenuAnchors,
                                 children: [
-                                  // Copy Button
                                   TextSelectionToolbarTextButton(
                                     padding: const EdgeInsets.all(12.0),
                                     onPressed: () {
@@ -381,7 +391,6 @@ class _DevotionalReaderScreenState
                                     },
                                     child: const Icon(Icons.copy, size: 20),
                                   ),
-                                  // Color Buttons
                                   _buildColorButton(
                                     paraIndex,
                                     "0xFF81C784",
@@ -406,7 +415,6 @@ class _DevotionalReaderScreenState
                                     Colors.pink,
                                     editableTextState,
                                   ),
-                                  // Clear Button
                                   TextSelectionToolbarTextButton(
                                     padding: const EdgeInsets.all(12.0),
                                     onPressed: () {
@@ -474,13 +482,11 @@ class _DevotionalReaderScreenState
     Color? baseColor,
     bool isDark,
   ) {
-    // 1. Create a map of styles for every character
     List<Map<String, dynamic>> charStyles = List.generate(
       text.length,
       (index) => {'bgColor': null},
     );
 
-    // 2. Apply User Highlights
     final myHighlights = _userHighlights.where(
       (h) =>
           h.bookId == widget.bookId &&
@@ -497,7 +503,6 @@ class _DevotionalReaderScreenState
       }
     }
 
-    // 3. Apply Search Highlights (Yellow)
     if (query != null && query.isNotEmpty) {
       String lowerText = text.toLowerCase();
       String lowerQuery = query.toLowerCase();
@@ -519,7 +524,6 @@ class _DevotionalReaderScreenState
       }
     }
 
-    // 4. Construct TextSpans based on style changes
     List<TextSpan> spans = [];
     if (text.isEmpty) return spans;
 
@@ -542,7 +546,6 @@ class _DevotionalReaderScreenState
         currentStyle = style;
       }
     }
-    // Add remaining
     spans.add(
       TextSpan(
         text: text.substring(currentStart),
@@ -556,33 +559,20 @@ class _DevotionalReaderScreenState
     return spans;
   }
 
-  // ✅ SAFER REFLOW LOGIC
   List<String> _reflowText(String rawContent) {
-    // 1. SAFE CLEANING: Only fix things we are 100% sure are errors
     String cleanContent = rawContent
-        // Remove citations like [1], (12)
         .replaceAll(RegExp(r'\[\d+\]'), '')
         .replaceAll(RegExp(r'\(\d+\)'), '')
-        // Fix: Letter touching Digit (e.g., "January2" -> "January 2")
         .replaceAllMapped(RegExp(r'(?<=[a-zA-Z])(?=\d)'), (match) => ' ')
-        // Fix: Digit touching Letter (e.g., "21to" -> "21 to")
         .replaceAllMapped(RegExp(r'(?<=\d)(?=[a-zA-Z])'), (match) => ' ')
-        // Fix: Missing space after punctuation (e.g., "end.The" -> "end. The")
         .replaceAllMapped(RegExp(r'(?<=[.!?])(?=[A-Z])'), (match) => ' ')
-        // Fix: CamelCase joins (e.g., "GodLoves" -> "God Loves")
         .replaceAllMapped(RegExp(r'(?<=[a-z])(?=[A-Z])'), (match) => ' ')
-        // ✅ REMOVED the dangerous "to", "of", "by" replacements
-        // that were breaking "foretold" into "fore to ld"
-        // Fix strange multiple spaces
         .replaceAll(RegExp(r'\s+'), ' ');
 
-    // 2. REFLOW STEP (Groups into paragraphs of 4 sentences)
     List<String> finalParagraphs = [];
     StringBuffer currentBuffer = StringBuffer();
     int sentenceCount = 0;
 
-    // Split by punctuation to rebuild clean sentences
-    // This looks for . ! ? followed by a space
     RegExp sentenceSplit = RegExp(r'(?<=[.!?])\s+');
     List<String> allSentences = cleanContent.split(sentenceSplit);
 
@@ -591,12 +581,9 @@ class _DevotionalReaderScreenState
       if (s.isEmpty) continue;
 
       currentBuffer.write(s);
-
-      // Add a space between sentences (unless it's the last one)
       currentBuffer.write(" ");
       sentenceCount++;
 
-      // Create new paragraph after 4 sentences
       if (sentenceCount >= 4) {
         finalParagraphs.add(currentBuffer.toString().trim());
         currentBuffer.clear();
