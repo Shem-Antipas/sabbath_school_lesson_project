@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // ✅ Required for Clipboard
+import 'package:flutter/services.dart'; // Required for Clipboard
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart'; 
 import '../providers/hymnal_provider.dart';
-// ✅ NEW: Import the MIDI player widget
 import '../widgets/hymn_midi_player.dart';
 
 class HymnDetailScreen extends ConsumerStatefulWidget {
@@ -38,10 +37,192 @@ class _HymnDetailScreenState extends ConsumerState<HymnDetailScreen> {
     super.dispose();
   }
 
-  // ✅ Helper to Copy Text (Logic preserved)
+  // --- 🔍 FIXED: SEARCH & KEYPAD LOGIC ---
+
+  void _showHymnSearchDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      // 1. Rename this context to 'dialogContext' to avoid confusion
+      builder: (dialogContext) {
+        String inputNumber = "";
+        
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+            final textColor = isDark ? Colors.white : Colors.black;
+
+            void handlePress(String value) {
+              if (value == 'GO') {
+                // 2. Pass 'dialogContext' explicitly to the jump function
+                _jumpToHymn(inputNumber, dialogContext);
+              } else {
+                setDialogState(() {
+                  if (value == 'DEL') {
+                    if (inputNumber.isNotEmpty) {
+                      inputNumber = inputNumber.substring(0, inputNumber.length - 1);
+                    }
+                  } else {
+                    if (inputNumber.length < 4) {
+                      inputNumber += value;
+                    }
+                  }
+                });
+              }
+            }
+
+            return Dialog(
+              backgroundColor: bgColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Go to Hymn Number",
+                      style: TextStyle(color: Colors.grey, fontSize: 14),
+                    ),
+                    const SizedBox(height: 15),
+                    
+                    // Display Box
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.black38 : Colors.grey[200],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: inputNumber.isNotEmpty 
+                              ? const Color(0xFF7D2D3B) 
+                              : Colors.transparent, 
+                          width: 2
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          inputNumber.isEmpty ? "- - -" : inputNumber,
+                          style: TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF7D2D3B),
+                            letterSpacing: 4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Keypad Grid
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: 12, 
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 1.4,
+                      ),
+                      itemBuilder: (context, index) {
+                        String label;
+                        if (index < 9) {
+                          label = '${index + 1}'; 
+                        } else if (index == 9) {
+                          label = 'DEL';
+                        } else if (index == 10) {
+                          label = '0';
+                        } else {
+                          label = 'GO';
+                        }
+
+                        bool isGo = label == 'GO';
+                        bool isDel = label == 'DEL';
+
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => handlePress(label),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: isGo 
+                                  ? const Color(0xFF7D2D3B) 
+                                  : (isDark ? Colors.grey[800]! : Colors.white),
+                                borderRadius: BorderRadius.circular(10),
+                                border: isGo ? null : Border.all(color: Colors.grey.withOpacity(0.3)),
+                                boxShadow: isGo ? [
+                                  BoxShadow(
+                                    color: const Color(0xFF7D2D3B).withOpacity(0.4),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4)
+                                  )
+                                ] : null,
+                              ),
+                              child: isDel
+                                ? Icon(Icons.backspace_rounded, color: textColor, size: 22)
+                                : Text(
+                                    label,
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                      color: isGo ? Colors.white : textColor,
+                                    ),
+                                  ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ✅ FIXED: Takes 'dialogContext' to pop the correct window
+  void _jumpToHymn(String numberStr, BuildContext dialogContext) {
+    if (numberStr.isEmpty) return;
+
+    int? searchId = int.tryParse(numberStr);
+    
+    final index = widget.allHymns.indexWhere((h) {
+      return h.id.toString() == numberStr || (searchId != null && h.id == searchId);
+    });
+
+    if (index != -1) {
+      // 1. Close the Dialog (using the dialog's context)
+      Navigator.pop(dialogContext); 
+      
+      // 2. Jump to the page (using the screen's controller)
+      // Small delay prevents animation stutter
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) {
+          _pageController.jumpToPage(index);
+        }
+      });
+    } else {
+      // Error: Keep dialog open and show snackbar
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Hymn #$numberStr not found."),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(milliseconds: 1500),
+        ),
+      );
+    }
+  }
+
+  // --- COPY LOGIC ---
   void _copyToClipboard(Hymn hymn) {
     String formattedLyrics = _formatForClipboard(hymn.htmlContent);
-
     String copyText = """
 ${hymn.title}
 ${hymn.topic}
@@ -50,32 +231,20 @@ $formattedLyrics
 
 Shared from Advent Study Hub
 """;
-
     Clipboard.setData(ClipboardData(text: copyText));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Hymn copied with formatting!")),
     );
   }
 
-  // ✅ Smart helper that turns HTML tags into real newlines (Logic preserved)
   String _formatForClipboard(String content) {
-    if (!content.contains("<")) {
-      return content;
-    }
-
+    if (!content.contains("<")) return content;
     String processed = content;
     processed = processed.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
     processed = processed.replaceAll(RegExp(r'</(p|div)>', caseSensitive: false), '\n\n');
     processed = processed.replaceAll(RegExp(r'<[^>]*>', multiLine: true, caseSensitive: true), '');
     processed = processed.replaceAll(RegExp(r'\n{3,}'), '\n\n');
-
     return processed.trim();
-  }
-
-  // Helper to strip HTML locally (Logic preserved)
-  String _stripHtml(String htmlString) {
-    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
-    return htmlString.replaceAll(exp, '').trim();
   }
 
   @override
@@ -83,16 +252,13 @@ Shared from Advent Study Hub
     final fontSize = ref.watch(hymnFontSizeProvider);
     final isKeepScreenOn = ref.watch(keepScreenOnProvider);
 
-    // Theme Logic
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
     final iconColor = isDark ? Colors.white : const Color(0xFF7D2D3B);
 
-    // ✅ Get the hymn currently being viewed (updates on swipe)
     final currentHymn = widget.allHymns[_currentIndex];
     
-    // ✅ Logic to determine if MIDI should show (Assumes Hymn model has 'language')
     final bool showMidi = currentHymn.language == 'English';
 
     return Scaffold(
@@ -129,7 +295,18 @@ Shared from Advent Study Hub
           ),
         ],
       ),
-      // Wrap Body in SelectionArea to allow highlighting text
+      
+      // ✅ FLOATING SEARCH BUTTON
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(bottom: showMidi ? 90.0 : 0),
+        child: FloatingActionButton(
+          onPressed: _showHymnSearchDialog,
+          backgroundColor: const Color(0xFF7D2D3B),
+          elevation: 4,
+          child: const Icon(Icons.search, color: Colors.white, size: 28),
+        ),
+      ),
+
       body: SelectionArea(
         child: PageView.builder(
           controller: _pageController,
@@ -145,11 +322,8 @@ Shared from Advent Study Hub
           },
         ),
       ),
-      // ✅ NEW: MIDI Player anchored to the bottom
-      // It updates dynamically based on 'currentHymn'
       bottomNavigationBar: showMidi 
         ? HymnMidiPlayer(
-            // Uses currentHymn.id for the filename (e.g. "1.mid")
             midiUrl: "assets/audio/hymns/${currentHymn.id}.mid", 
             hymnTitle: currentHymn.title,
             hymnNumber: currentHymn.id.toString(),
@@ -187,12 +361,10 @@ Shared from Advent Study Hub
           ),
           const Divider(height: 40, thickness: 1, indent: 50, endIndent: 50),
 
-          // Content
           isHtml
               ? _buildHtmlContent(hymn.htmlContent, fontSize, isDark)
               : _buildPlainContent(hymn.htmlContent, fontSize, isDark),
 
-          // ✅ Padding to ensure player doesn't cover text
           const SizedBox(height: 120),
         ],
       ),

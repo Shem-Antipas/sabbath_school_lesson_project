@@ -19,12 +19,11 @@ class HymnalScreen extends ConsumerWidget {
     return groups;
   }
 
-  // ✅ IMPROVED REGEX: Removes Digits (1), Dots (.), Spaces ( ), Hyphens (-), and Dashes (–)
   String _cleanTitle(String rawTitle) {
     return rawTitle.replaceFirst(RegExp(r'^[\d\.\s\-\–]+'), '').trim();
   }
 
-  // --- JUMP TO NUMBER DIALOG ---
+  // --- FIXED JUMP TO NUMBER DIALOG ---
   void _showJumpToDialog(
     BuildContext context,
     WidgetRef ref,
@@ -41,7 +40,7 @@ class HymnalScreen extends ConsumerWidget {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) { // Renamed to differentiate contexts
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
@@ -60,7 +59,7 @@ class HymnalScreen extends ConsumerWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      input.isEmpty ? "---" : input,
+                      input.isEmpty ? "- - -" : input,
                       style: TextStyle(
                         fontSize: 40,
                         fontWeight: FontWeight.bold,
@@ -104,18 +103,22 @@ class HymnalScreen extends ConsumerWidget {
                               elevation: 0,
                             ),
                             onPressed: () {
-                              setDialogState(() {
-                                if (label == "C") {
-                                  input = "";
-                                } else if (label == "GO") {
-                                  if (input.isNotEmpty) {
+                              // --- LOGIC SPLIT START ---
+                              if (label == "GO") {
+                                // 1. NAVIGATION LOGIC (NO setState)
+                                if (input.isNotEmpty) {
+                                  // Find the hymn safely
+                                  try {
                                     final target = allHymns.firstWhere(
-                                      (h) => h.id.toString() == input,
-                                      orElse: () => allHymns.first,
+                                      (h) => h.id.toString() == input
                                     );
-                                    Navigator.pop(context);
+                                    
+                                    // Close Dialog
+                                    Navigator.pop(dialogContext);
+                                    
+                                    // Navigate to Detail Screen
                                     Navigator.push(
-                                      context,
+                                      dialogContext, // Use outer context reference
                                       MaterialPageRoute(
                                         builder: (context) => HymnDetailScreen(
                                           initialHymn: target,
@@ -123,11 +126,27 @@ class HymnalScreen extends ConsumerWidget {
                                         ),
                                       ),
                                     );
+                                  } catch (e) {
+                                    // Not found logic (Visual feedback inside dialog)
+                                    setDialogState(() {
+                                      input = ""; // Clear input to show error
+                                    });
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                       const SnackBar(content: Text("Hymn not found"), duration: Duration(seconds: 1)),
+                                    );
                                   }
-                                } else {
-                                  if (input.length < 3) input += label;
                                 }
-                              });
+                              } else {
+                                // 2. TYPING LOGIC (NEEDS setState)
+                                setDialogState(() {
+                                  if (label == "C") {
+                                    input = "";
+                                  } else {
+                                    if (input.length < 3) input += label;
+                                  }
+                                });
+                              }
+                              // --- LOGIC SPLIT END ---
                             },
                             child: Text(
                               label,
@@ -183,29 +202,24 @@ class HymnalScreen extends ConsumerWidget {
                   color: appBarTextColor, fontWeight: FontWeight.bold),
             ),
             Text(
-              currentLanguage.label, // Dynamic label from Enum
+              currentLanguage.label, 
               style: TextStyle(color: appBarTextColor.withOpacity(0.7), fontSize: 12),
             ),
           ],
         ),
         actions: [
-          // ✅ DYNAMIC LANGUAGE SWITCHER
+          // DYNAMIC LANGUAGE SWITCHER
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
             child: PopupMenuButton<HymnLanguage>(
               tooltip: "Switch Language",
               offset: const Offset(0, 50),
-              
-              // ✅ FIXED: Background Color responds to Theme
               color: isDark ? const Color(0xFF252525) : Colors.white,
               elevation: 4,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              
               onSelected: (HymnLanguage lang) {
                 ref.read(hymnLanguageProvider.notifier).state = lang;
               },
-              
-              // The Button Trigger
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
@@ -231,8 +245,6 @@ class HymnalScreen extends ConsumerWidget {
                   ],
                 ),
               ),
-              
-              // The Menu Items
               itemBuilder: (BuildContext context) {
                 return HymnLanguage.values.map((HymnLanguage lang) {
                   final isSelected = lang == currentLanguage;
@@ -254,7 +266,6 @@ class HymnalScreen extends ConsumerWidget {
                           lang.label,
                           style: TextStyle(
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                            // ✅ FIXED: Text Color responds to Theme
                             color: isDark ? Colors.white : Colors.black87,
                             fontSize: 16,
                           ),
@@ -382,7 +393,7 @@ class HymnalScreen extends ConsumerWidget {
           hymns[index],
           hymns,
           isDark,
-          ref, // ✅ 1. Passing Ref Here
+          ref, 
         ),
       );
     }
@@ -411,7 +422,7 @@ class HymnalScreen extends ConsumerWidget {
                     topicHymns[index],
                     topicHymns,
                     isDark,
-                    ref, // ✅ 2. Passing Ref Here too
+                    ref,
                   ),
                   childCount: topicHymns.length,
                 ),
@@ -428,7 +439,7 @@ class HymnalScreen extends ConsumerWidget {
     Hymn hymn,
     List<Hymn> allHymns,
     bool isDark,
-    WidgetRef ref, // ✅ 3. Accepting Ref Here
+    WidgetRef ref,
   ) {
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
@@ -464,14 +475,10 @@ class HymnalScreen extends ConsumerWidget {
             fontSize: 16,
           ),
         ),
-        // ✅ 4. CORRECT PLAY BUTTON LOGIC
         trailing: IconButton(
           icon: const Icon(Icons.play_arrow_rounded, color: Colors.grey),
           onPressed: () async {
-            // Trigger Play and wait for result
             bool success = await ref.read(audioProvider.notifier).playHymn(hymn);
-
-            // If returned false (File missing), show SnackBar
             if (!success && context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -573,7 +580,6 @@ class HymnalScreen extends ConsumerWidget {
                   color: Colors.grey,
                   tooltip: "Stop & Close",
                   onPressed: () async {
-                    // This stops audio AND removes the player from screen
                     ref.read(audioProvider.notifier).stop();
                   },
                 ),

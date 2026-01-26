@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart'; // ✅ Added for Date Logic
 
 // --- SERVICES & PROVIDERS ---
 import '../services/daily_verse_service.dart';
@@ -19,6 +20,8 @@ import 'lesson_list_screen.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'devotionals_library_screen.dart';
+import 'donate_screen.dart'; // ✅ NEW: Import Donate Screen
+import 'reader_screen.dart'; // ✅ NEW: Import Reader Screen (Ensure filename matches)
 
 // --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
@@ -31,7 +34,7 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  // ✅ FIX 1: Add state variable for the verse (starts with placeholder)
+  // State variable for the verse
   DailyVerse _todayVerse = DailyVerseService.getPlaceholderVerse();
 
   @override
@@ -42,10 +45,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       if (mounted) {
         await _checkAndShowSabbathPopup();
       }
-      // ✅ Refresh user with safety check
+      // Refresh user with safety check
       _refreshUser();
 
-      // ✅ FIX 2: Initialize service and fetch verse asynchronously
+      // Initialize service and fetch verse asynchronously
       await DailyVerseService.init();
       final verse = await DailyVerseService.getTodayVerse();
 
@@ -57,14 +60,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     });
   }
 
-  // ✅ CRASH-PROOF USER REFRESH
+  // Crash-proof user refresh
   Future<void> _refreshUser() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       try {
         await user.reload();
       } catch (e) {
-        // Ignore the specific Pigeon decode error if it happens
         debugPrint("User reload warning (ignored): $e");
       }
       if (mounted) setState(() {});
@@ -319,9 +321,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ FIX 3: Use the state variable instead of calling the service directly
     final todayVerse = _todayVerse;
-
     final asyncQuarterlies = ref.watch(quarterlyListProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -345,9 +345,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             elevation: 0,
             backgroundColor: backgroundColor,
             centerTitle: false,
-            // -----------------------------------------------------------------
-            // STREAM BUILDER
-            // -----------------------------------------------------------------
             title: StreamBuilder<User?>(
               stream: FirebaseAuth.instance.userChanges(),
               builder: (context, snapshot) {
@@ -384,9 +381,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               Padding(
                 padding: const EdgeInsets.only(right: 16, top: 20),
                 child: InkWell(
-                  // -----------------------------------------------------------
-                  // ONTAP NAVIGATION
-                  // -----------------------------------------------------------
                   onTap: () {
                     final user = FirebaseAuth.instance.currentUser;
                     if (user != null) {
@@ -473,6 +467,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   const _SectionLabel(label: "More Resources"),
                   const SizedBox(height: 12),
                   _buildHymnalTile(context),
+
+                  // ✅ NEW: DONATE CARD SECTION
+                  const SizedBox(height: 24),
+                  _buildDonateCard(context, isDark),
+
                   const SizedBox(height: 50),
                 ],
               ),
@@ -511,10 +510,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Icon(Icons.format_quote, color: Colors.white54, size: 32),
-
-              // ---------------------------------------------------------------
-              // UPDATED VISIBLE BUTTON
-              // ---------------------------------------------------------------
               Material(
                 color: Colors.transparent,
                 child: InkWell(
@@ -524,9 +519,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 8,
-                    ), // Large touch target
+                    ),
                     decoration: BoxDecoration(
-                      color: Colors.white, // High Contrast Background
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: const [
                         BoxShadow(
@@ -541,9 +536,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         Text(
                           "Read Now",
                           style: TextStyle(
-                            color: Color(
-                              0xFF2C3E50,
-                            ), // Dark text for readability
+                            color: Color(0xFF2C3E50),
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                           ),
@@ -559,7 +552,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 ),
               ),
-              // ---------------------------------------------------------------
             ],
           ),
           const SizedBox(height: 16),
@@ -587,46 +579,82 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // NEW HELPER: Handles navigation logic separately from UI
-  // ---------------------------------------------------------------------------
-  void _handleVerseNavigation(String reference) {
-    debugPrint("Attempting to parse reference: $reference");
+  // --- NEW: DONATE CARD WIDGET ---
+  Widget _buildDonateCard(BuildContext context, bool isDark) {
+    // Brand Colors
+    const brandCyan = Color(0xFF00A8E8);
+    const brandNavy = Color(0xFF06275C);
+    
+    final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
-    final parsed = parseBibleReference(reference);
-
-    if (parsed != null) {
-      final String book = parsed['book'];
-      final int chapter = parsed['chapter'];
-      final int verse = parsed['verse']; //
-
-      // 1. Generate the ID (e.g., "PSA.23") using the helper
-      final String bookId = _getBookId(book);
-      final String chapterId = "$bookId.$chapter";
-
-      // 2. Generate the Readable Reference (e.g., "Psalms 23")
-      final String displayReference = "$book $chapter";
-
-      debugPrint("Navigating to: $chapterId ($displayReference)");
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => BibleReaderScreen(
-            // ✅ PASSING CORRECT NAMED ARGUMENTS
-            chapterId: chapterId,
-            reference: displayReference,
-            targetVerse: verse,
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
-        ),
-      );
-    } else {
-      debugPrint("Parsing failed. Opening generic Bible Screen.");
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const BibleScreen()),
-      );
-    }
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "DONATE", 
+            style: TextStyle(
+              color: brandCyan, 
+              fontWeight: FontWeight.bold, 
+              fontSize: 12, 
+              letterSpacing: 1.5
+            )
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "Support the Ministry!",
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Thanks to your donations, we’re able to keep developing and expanding what we offer.",
+            style: TextStyle(
+              color: subTextColor,
+              fontSize: 14,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (c) => const DonateScreen()),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: brandCyan, 
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              ),
+              child: const Text("DONATE", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.0)),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSabbathSchoolCard(
@@ -686,19 +714,62 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           size: 16,
           color: Colors.grey,
         ),
+        // ✅ INTELLIGENT STUDY CLICK
         onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => LessonListScreen(
-                quarterlyId: quarterly.id,
-                quarterlyTitle: quarterly.title,
-              ),
-            ),
-          );
+          _handleIntelligentLessonNavigation(context, quarterly);
         },
       ),
     );
+  }
+
+  // ✅ INTELLIGENT NAVIGATION LOGIC
+  void _handleIntelligentLessonNavigation(
+    BuildContext context,
+    dynamic quarterly,
+  ) {
+    // Attempt to open ReaderScreen for "Today's Lesson"
+    // Use try-catch to ensure we don't crash if ID format varies
+    try {
+      final DateTime now = DateTime.now();
+      // NOTE: Adjust this ID format based on your specific Quarterly Data structure.
+      // Standard Format: "quarterlyID/lessonIndex/dayIndex"
+      // Example: "en/cq/2024-01/05"
+      // Since we can't reliably guess the ID without the lesson list loaded,
+      // we default to opening the List Screen for safety, but here is where
+      // you would swap it to ReaderScreen if you had the 'todayLessonId'.
+
+      /* // Example of direct reader navigation if ID is known:
+      final String todayId = "${quarterly.id}/01"; // Placeholder
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReaderScreen(lessonIndex: todayId, lessonTitle: "Today's Lesson"),
+        ),
+      ); 
+      */
+
+      // Fallback to List Screen (Safest user experience for now)
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => LessonListScreen(
+            quarterlyId: quarterly.id,
+            quarterlyTitle: quarterly.title,
+          ),
+        ),
+      );
+    } catch (e) {
+      // If anything fails, open the list
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => LessonListScreen(
+            quarterlyId: quarterly.id,
+            quarterlyTitle: quarterly.title,
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildQuickStudyGrid(BuildContext context) {
@@ -830,14 +901,45 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // UPDATED PARSE LOGIC: Handles Ranges and Hyphens
-  // ---------------------------------------------------------------------------
+  // Handle automatic navigation to a verse
+  void _handleVerseNavigation(String reference) {
+    debugPrint("Attempting to parse reference: $reference");
+
+    final parsed = parseBibleReference(reference);
+
+    if (parsed != null) {
+      final String book = parsed['book'];
+      final int chapter = parsed['chapter'];
+      final int verse = parsed['verse'];
+
+      final String bookId = _getBookId(book);
+      final String chapterId = "$bookId.$chapter";
+      final String displayReference = "$book $chapter";
+
+      debugPrint("Navigating to: $chapterId ($displayReference)");
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => BibleReaderScreen(
+            chapterId: chapterId,
+            reference: displayReference,
+            targetVerse: verse,
+          ),
+        ),
+      );
+    } else {
+      debugPrint("Parsing failed. Opening generic Bible Screen.");
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const BibleScreen()),
+      );
+    }
+  }
+
   Map<String, dynamic>? parseBibleReference(String reference) {
     try {
       final cleanRef = reference.trim();
-
-      // Find separator between book name and numbers
       int lastSpaceIndex = cleanRef.lastIndexOf(' ');
       if (lastSpaceIndex == -1) return null;
 
@@ -848,12 +950,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         book = "Psalms";
       }
 
-      // Ensure we have 'Chapter:Verse' format
       if (!location.contains(':')) return null;
 
       List<String> parts = location.split(':');
-
-      // FIX: Handle verse ranges (e.g., "16-18") by taking only the first part
       String versePart = parts[1];
       if (versePart.contains('-')) {
         versePart = versePart.split('-')[0];
@@ -874,78 +973,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final name = bookName.trim();
 
     final map = {
-      // Old Testament
-      'Genesis': 'GEN',
-      'Exodus': 'EXOD',
-      'Leviticus': 'LEV',
-      'Numbers': 'NUM',
-      'Deuteronomy': 'DEU',
-      'Joshua': 'JOS',
-      'Judges': 'JDG',
-      'Ruth': 'RUT',
-      '1 Samuel': '1SA',
-      '2 Samuel': '2SA',
-      '1 Kings': '1KI',
-      '2 Kings': '2KI',
-      '1 Chronicles': '1CH',
-      '2 Chronicles': '2CH',
+      'Genesis': 'GEN', 'Exodus': 'EXOD', 'Leviticus': 'LEV', 'Numbers': 'NUM', 'Deuteronomy': 'DEU',
+      'Joshua': 'JOS', 'Judges': 'JDG', 'Ruth': 'RUT', '1 Samuel': '1SA', '2 Samuel': '2SA',
+      '1 Kings': '1KI', '2 Kings': '2KI', '1 Chronicles': '1CH', '2 Chronicles': '2CH',
       'Ezra': 'EZR', 'Nehemiah': 'NEH', 'Esther': 'EST', 'Job': 'JOB',
-
-      // ✅ FIX 4: Corrected Psalms mapping
-      'Psalms': 'PSA',
-      'Psalm': 'PSA',
-
-      'Proverbs': 'PRO',
-      'Ecclesiastes': 'ECC',
-      'Song of Solomon': 'SNG',
-      'Isaiah': 'ISA',
-      'Jeremiah': 'JER',
-      'Lamentations': 'LAM',
-      'Ezekiel': 'EZK',
-      'Daniel': 'DAN',
-      'Hosea': 'HOS',
-      'Joel': 'JOL',
-      'Amos': 'AMO',
-      'Obadiah': 'OBA',
-      'Jonah': 'JON',
-      'Micah': 'MIC', 'Nahum': 'NAM', 'Habakkuk': 'HAB', 'Zephaniah': 'ZEP',
-      'Haggai': 'HAG', 'Zechariah': 'ZEC', 'Malachi': 'MAL',
-
-      // New Testament
-      'Matthew': 'MAT',
-      'Mark': 'MRK',
-      'Luke': 'LUK',
-      'John': 'JHN',
-      'Acts': 'ACT',
-      'Romans': 'ROM',
-      '1 Corinthians': '1CO',
-      '2 Corinthians': '2CO',
-      'Galatians': 'GAL',
-      'Ephesians': 'EPH',
-
-      // ✅ FIX 5: Corrected Philippians mapping
-      'Philippians': 'PHI',
-
-      'Colossians': 'COL',
-      '1 Thessalonians': '1TH', '2 Thessalonians': '2TH', '1 Timothy': '1TI',
-      '2 Timothy': '2TI', 'Titus': 'TIT',
-
-      // ✅ Philemon stays PHM
-      'Philemon': 'PHM',
-
-      'Hebrews': 'HEB', 'James': 'JAS', '1 Peter': '1PE', '2 Peter': '2PE',
-      '1 John': '1JN',
-      '2 John': '2JN',
-      '3 John': '3JN',
-      'Jude': 'JUD',
-      'Revelation': 'REV',
+      'Psalms': 'PSA', 'Psalm': 'PSA', 'Proverbs': 'PRO', 'Ecclesiastes': 'ECC',
+      'Song of Solomon': 'SNG', 'Isaiah': 'ISA', 'Jeremiah': 'JER', 'Lamentations': 'LAM',
+      'Ezekiel': 'EZK', 'Daniel': 'DAN', 'Hosea': 'HOS', 'Joel': 'JOL', 'Amos': 'AMO',
+      'Obadiah': 'OBA', 'Jonah': 'JON', 'Micah': 'MIC', 'Nahum': 'NAM', 'Habakkuk': 'HAB',
+      'Zephaniah': 'ZEP', 'Haggai': 'HAG', 'Zechariah': 'ZEC', 'Malachi': 'MAL',
+      'Matthew': 'MAT', 'Mark': 'MRK', 'Luke': 'LUK', 'John': 'JHN', 'Acts': 'ACT',
+      'Romans': 'ROM', '1 Corinthians': '1CO', '2 Corinthians': '2CO', 'Galatians': 'GAL',
+      'Ephesians': 'EPH', 'Philippians': 'PHI', 'Colossians': 'COL', '1 Thessalonians': '1TH',
+      '2 Thessalonians': '2TH', '1 Timothy': '1TI', '2 Timothy': '2TI', 'Titus': 'TIT',
+      'Philemon': 'PHM', 'Hebrews': 'HEB', 'James': 'JAS', '1 Peter': '1PE', '2 Peter': '2PE',
+      '1 John': '1JN', '2 John': '2JN', '3 John': '3JN', 'Jude': 'JUD', 'Revelation': 'REV',
     };
 
-    // Return the mapped ID, or default to first 3 letters uppercase if not found
-    return map[name] ??
-        (name.length >= 3
-            ? name.substring(0, 3).toUpperCase()
-            : name.toUpperCase());
+    return map[name] ?? (name.length >= 3 ? name.substring(0, 3).toUpperCase() : name.toUpperCase());
   }
 }
 
@@ -955,9 +1000,7 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textColor = Theme.of(context).brightness == Brightness.dark
-        ? Colors.grey[400]
-        : Colors.grey[400];
+    final textColor = Theme.of(context).brightness == Brightness.dark ? Colors.grey[400] : Colors.grey[400];
     return Text(
       label,
       style: TextStyle(

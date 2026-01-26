@@ -19,11 +19,11 @@ dependencies:
   share_plus: ^7.2.2
   http: ^1.1.0
   audioplayers: ^6.0.0
-  html: ^0.15.4 # To parse Bible HTML into clean verses
-  flutter_tts: ^3.8.3 # For reading aloud
-  shared_preferences: ^2.5.4 # For storing user settings
+  html: ^0.15.4 
+  flutter_tts: ^3.8.3 
+  shared_preferences: ^2.5.4 
   flutter_launcher_icons: ^0.13.1
-  scrollable_positioned_list: ^0.3.8 # For scrolling to specific verses
+  scrollable_positioned_list: ^0.3.8 
   url_launcher: ^6.1.11
   sqflite: ^2.2.0+3
   font_awesome_flutter: ^10.12.0
@@ -38,8 +38,17 @@ dependencies:
   just_audio: ^0.9.46
   just_audio_background: ^0.0.1-beta.17
   
+  # Internationalization & Date Formatting
+  intl: ^0.20.2
 
-  # You can remove flutter_markdown as it isn't needed for this API
+  # Payment Gateways
+  mpesa_flutter_plugin: ^1.6.1  
+  # flutter_mpesa_stk: ^1.1.0  <-- You can remove this line if you are only using the plugin above
+
+# ✅ CRITICAL FIX: This must be at the ROOT level (No spaces at the start)
+# This forces the older mpesa_flutter_plugin to accept your newer intl version
+dependency_overrides:
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:
@@ -77,26 +86,22 @@ flutter:
     - assets/branding.png
     - assets/data/
     - assets/midi/
+
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/icon.png"
-  min_sdk_android: 21 # optional
-  adaptive_icon_background: "#ffffff" # optional (for Android adaptive icons)
-  adaptive_icon_foreground: "assets/icon.png" # optional
+  min_sdk_android: 21 
+  adaptive_icon_background: "#ffffff" 
+  adaptive_icon_foreground: "assets/icon.png" 
 
 flutter_native_splash:
-  color: "#06275C" # Blue background color
-  image: "assets/logo.png" # Using your app icon as the center logo
-
-  # Optional: Different look for Dark Mode
+  color: "#06275C"
+  image: "assets/logo.png"
   color_dark: "#06275C"
   image_dark: "assets/logo.png"
-
-  # Android 12+ specific settings
   android_12:
     image: "assets/logo.png"
     icon_background_color: "#06275C"
-
   android: true
   ios: true

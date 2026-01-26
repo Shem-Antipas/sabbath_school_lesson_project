@@ -31,7 +31,21 @@ class BibleApiService {
 
   static Database? _database;
 
-  // --- 1. ENGLISH MAPPING (Standard IDs) ---
+  // ✅ 1. DEFINE TESTAMENT LISTS
+  static const List<String> otBooks = [
+    'Gen', 'Exod', 'Lev', 'Num', 'Deut', 'Josh', 'Judg', 'Ruth', '1Sam', '2Sam',
+    '1Kgs', '2Kgs', '1Chr', '2Chr', 'Ezra', 'Neh', 'Esth', 'Job', 'Ps', 'Prov',
+    'Eccl', 'Song', 'Isa', 'Jer', 'Lam', 'Ezek', 'Dan', 'Hos', 'Joel', 'Amos',
+    'Obad', 'Jonah', 'Mic', 'Nah', 'Hab', 'Zeph', 'Hag', 'Zech', 'Mal'
+  ];
+
+  static const List<String> ntBooks = [
+    'Matt', 'Mark', 'Luke', 'John', 'Acts', 'Rom', '1Cor', '2Cor', 'Gal', 'Eph',
+    'Phil', 'Col', '1Thess', '2Thess', '1Tim', '2Tim', 'Titus', 'Phlm', 'Heb',
+    'Jas', '1Pet', '2Pet', '1John', '2John', '3John', 'Jude', 'Rev'
+  ];
+
+  // --- ENGLISH MAPPING (Standard IDs) ---
   static const Map<String, String> _englishNames = {
     'Gen': 'Genesis', 'Exod': 'Exodus', 'Lev': 'Leviticus', 'Num': 'Numbers', 'Deut': 'Deuteronomy',
     'Josh': 'Joshua', 'Judg': 'Judges', 'Ruth': 'Ruth', '1Sam': '1 Samuel', '2Sam': '2 Samuel',
@@ -49,7 +63,7 @@ class BibleApiService {
     '3John': '3 John', 'Jude': 'Jude', 'Rev': 'Revelation',
   };
 
-  // --- 2. LUO MAPPING ---
+  // --- LUO MAPPING ---
   static const Map<String, String> _luoNames = {
     'Gen': 'Chakruok', 'Exod': 'Wuok', 'Lev': 'Tim Jo-Lawi', 'Num': 'Kwan', 'Deut': 'Rapar mar Chik',
     'Josh': 'Joshua', 'Judg': 'Jong\'ad Bura', 'Ruth': 'Ruth', '1Sam': '1 Samuel', '2Sam': '2 Samuel',
@@ -66,7 +80,7 @@ class BibleApiService {
     '1John': '1 Johana', '2John': '2 Johana', '3John': '3 Johana', 'Jude': 'Juda', 'Rev': 'Fweny',
   };
 
-  // --- 3. SWAHILI MAPPING ---
+  // --- SWAHILI MAPPING ---
   static const Map<String, String> _swahiliNames = {
     'Gen': 'Mwanzo', 'Exod': 'Kutoka', 'Lev': 'Mambo ya Walawi', 'Num': 'Hesabu', 'Deut': 'Kumbukumbu',
     'Josh': 'Yoshua', 'Judg': 'Waamuzi', 'Ruth': 'Ruthu', '1Sam': '1 Samweli', '2Sam': '2 Samweli',
@@ -104,7 +118,6 @@ class BibleApiService {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, "bible.db");
     
-    // NOTE: In production, consider versioning to avoid needing to uninstall.
     final exists = await databaseExists(path);
 
     if (!exists) {
@@ -128,13 +141,10 @@ class BibleApiService {
     for (var version in BibleVersion.values) {
       if (version == BibleVersion.kjv) continue; 
 
-      // 1. Create Table if Not Exists
       await db.execute(
         'CREATE TABLE IF NOT EXISTS ${version.tableName} (book TEXT, chapter INTEGER, verse INTEGER, content TEXT)'
       );
 
-      // 2. CHECK IF DATA EXISTS (Row Count)
-      // This is better than just checking if table exists, because a failed import might leave an empty table.
       final countResult = await db.rawQuery('SELECT COUNT(*) as count FROM ${version.tableName}');
       final int count = Sqflite.firstIntValue(countResult) ?? 0;
 
@@ -145,19 +155,12 @@ class BibleApiService {
           final dynamic decodedData = json.decode(jsonString);
           final batch = db.batch();
 
-          // ✅ DETECT SWAHILI STRUCTURE (BIBLEBOOK -> List)
           if (decodedData is Map<String, dynamic> && 
               decodedData.containsKey('BIBLEBOOK') && 
               decodedData['BIBLEBOOK'] is List) {
-            
-            print("Detected Swahili List Structure for ${version.label}");
             _parseListStructure(decodedData, batch, version.tableName);
-            
           } else if (decodedData is Map<String, dynamic>) {
-            
-            print("Detected Map Structure for ${version.label}");
             _parseMapStructure(decodedData, batch, version.tableName);
-            
           } else {
              print("❌ Unknown JSON format for ${version.label}");
           }
@@ -171,39 +174,28 @@ class BibleApiService {
     }
   }
 
-  // --- PARSER: SWAHILI (List Structure - Robust Version) ---
   void _parseListStructure(Map<String, dynamic> data, Batch batch, String tableName) {
-    // Safety check for root key
     if (!data.containsKey('BIBLEBOOK')) return;
-
     final List<dynamic> books = data['BIBLEBOOK'];
 
     for (var book in books) {
-      // 1. Resolve Book ID from "book_number" (e.g. "1" -> "Gen")
-      // Using tryParse is safer than parse.
       var bookNumRaw = book['book_number'];
       int bookNum = int.tryParse(bookNumRaw.toString()) ?? 0;
       
-      // Safety check: Bible has 66 books.
-      if (bookNum < 1 || bookNum > _bookIdsOrdered.length) {
-        continue; 
-      }
+      if (bookNum < 1 || bookNum > _bookIdsOrdered.length) continue; 
       
       String bookId = _bookIdsOrdered[bookNum - 1]; 
 
-      // 2. Parse Chapters
       if (book['CHAPTER'] is! List) continue;
       final List<dynamic> chapters = book['CHAPTER'];
 
       for (var chapter in chapters) {
         var chapNumRaw = chapter['chapter_number'];
-        // Remove non-digits just in case
         String cleanChap = chapNumRaw.toString().replaceAll(RegExp(r'[^0-9]'), '');
         int chapterNum = int.tryParse(cleanChap) ?? 0;
         
         if (chapterNum == 0) continue;
 
-        // 3. Parse Verses
         if (chapter['VERSES'] is! List) continue;
         final List<dynamic> verses = chapter['VERSES'];
 
@@ -227,15 +219,11 @@ class BibleApiService {
     }
   }
 
-  // --- PARSER: MAP STRUCTURE (With Safety Check for Isaiah/Jeremiah) ---
   void _parseMapStructure(Map<String, dynamic> rawData, Batch batch, String tableName) {
     rawData.forEach((bookKey, chaptersMap) {
       String bookId = bookKey; 
-
-      // 1. Clean the book key
       String cleanKey = bookKey.trim().replaceAll('.', '').toLowerCase();
 
-      // 2. SAFETY CHECK: Explicitly fix Isaya/Jeremia
       if (cleanKey == 'isaya' || cleanKey == 'isaiah') {
         bookId = 'Isa'; 
       } else if (cleanKey == 'jeremia' || cleanKey == 'jeremiah') {
@@ -290,8 +278,6 @@ class BibleApiService {
     });
   }
 
-  // --- REST OF THE METHODS (Same as before) ---
-  
   String _getStandardBookId(String inputName) {
     String cleanInput = inputName.trim().toLowerCase();
     
@@ -389,61 +375,65 @@ class BibleApiService {
     });
   }
 
- // --- SMART KEYWORD SEARCH ---
-  Future<List<Map<String, dynamic>>> searchBible(
+  // --- ✅ 2. UPDATED SEARCH with TESTAMENT FILTER ---
+  Future<List<Map<String, dynamic>>> searchVerses(
     String query, {
     String? bookId,
     BibleVersion version = BibleVersion.kjv,
+    String testament = 'ALL', // Options: 'ALL', 'OT', 'NT'
   }) async {
     final db = await _db;
     
-    // 1. Clean the input: Remove punctuation and extra spaces
-    //    "Jesus, wept." -> "Jesus wept"
     String cleanQuery = query.replaceAll(RegExp(r'[^\w\s]'), '').trim();
-    
     if (cleanQuery.isEmpty) return [];
-
-    // 2. Split into individual keywords
-    //    "Jesus wept" -> ["Jesus", "wept"]
     List<String> keywords = cleanQuery.split(RegExp(r'\s+'));
 
-    // 3. Build the SQL Query dynamically
-    //    Start with basic SELECT
     StringBuffer sqlBuilder = StringBuffer("SELECT * FROM ${version.tableName} WHERE 1=1");
     List<dynamic> args = [];
 
-    //    Add a "LIKE" condition for EACH keyword
-    //    This means a verse must contain "Jesus" AND "wept" to show up.
+    // 1. Keyword Search
     for (String word in keywords) {
       sqlBuilder.write(" AND content LIKE ?");
       args.add('%$word%');
     }
 
-    // 4. Optional: Filter by Book
+    // 2. Specific Book Filter
     if (bookId != null && bookId != 'ALL') {
-      // Use the helper to ensure we search "Gen" instead of "Mwanzo"
       String standardId = _getStandardBookId(bookId);
       sqlBuilder.write(" AND book = ?");
       args.add(standardId);
     }
 
-    // 5. Limit results to prevent crashing the UI with too many matches
+    // 3. ✅ TESTAMENT FILTER LOGIC
+    if (testament == 'OT') {
+      final placeholders = List.filled(otBooks.length, '?').join(',');
+      sqlBuilder.write(" AND book IN ($placeholders)");
+      args.addAll(otBooks);
+    } else if (testament == 'NT') {
+      final placeholders = List.filled(ntBooks.length, '?').join(',');
+      sqlBuilder.write(" AND book IN ($placeholders)");
+      args.addAll(ntBooks);
+    }
+
     sqlBuilder.write(" LIMIT 100");
 
     final List<Map<String, dynamic>> results = await db.rawQuery(sqlBuilder.toString(), args);
 
-    // 6. Map results for display
     Map<String, String> nameMap = _englishNames;
     if (version == BibleVersion.luo) nameMap = _luoNames;
     if (version == BibleVersion.swahili) nameMap = _swahiliNames;
 
     return results.map((row) {
       String rawContent = row['content'].toString();
-      String cleanText = rawContent.replaceAll(RegExp(r'<[^>]*>'), ''); // Remove HTML/Tags if any
+      String cleanText = rawContent.replaceAll(RegExp(r'<[^>]*>'), ''); 
       
       final niceBookName = nameMap[row['book']] ?? row['book'];
 
       return {
+        'bookId': row['book'],
+        'chapter': row['chapter'],
+        'verse': row['verse'],
+        'bookName': niceBookName,
         'chapterId': "${row['book']}.${row['chapter']}",
         'verseNum': row['verse'],
         'reference': "$niceBookName ${row['chapter']}:${row['verse']}",

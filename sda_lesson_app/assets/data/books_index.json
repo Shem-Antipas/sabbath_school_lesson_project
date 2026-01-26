@@ -96,5 +96,19 @@
     "author": "Ellen G. White",
     "cover_image": "assets/images/col_cover.png",
     "file_path": "assets/data/col.json"
+  },
+  {
+    "id": "cch",
+    "title": "Counsels for the Church",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cch_cover.png",
+    "file_path": "assets/data/cch.json"
+  },
+  {
+    "id": "cd",
+    "title": "Counsels on Diet and Foods",
+    "author": "Ellen G. White",
+    "cover_image": "assets/images/cd_cover.png",
+    "file_path": "assets/data/cd.json"
   }
 ]

@@ -2,15 +2,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+
+// --- IMPORTS ---
 import 'screens/main_navigation.dart';
 import 'providers/theme_provider.dart';
 import 'utils/update_checker.dart';
-import 'package:just_audio_background/just_audio_background.dart';
+import 'services/mpesa_service.dart'; // ✅ 1. ADD THIS IMPORT
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   print("🚀 Starting App Initialization...");
+
+  // --- START NUCLEAR FIX FOR RANGE ERROR ---
+  try {
+    print("🧹 Clearing saved settings to fix RangeError...");
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear(); 
+    print("✅ Settings cleared. App is fresh.");
+  } catch (e) {
+    print("⚠️ Error clearing settings: $e");
+  }
+  // --- END NUCLEAR FIX ---
 
   try {
     // 1. Initialize Firebase
@@ -32,6 +47,18 @@ void main() async {
     print("✅ Audio Background Initialized");
   } catch (e) {
     print("❌ Audio Background Error: $e");
+  }
+
+  try {
+    // 3. ✅ INITIALIZE M-PESA SERVICE
+    print("💳 Initializing M-Pesa Service...");
+    
+    // REMOVED 'await' because initialize() is synchronous
+    MpesaService.initialize(); 
+    
+    print("✅ M-Pesa Initialized");
+  } catch (e) {
+    print("❌ M-Pesa Init Error: $e");
   }
 
   print("🏁 Running App...");

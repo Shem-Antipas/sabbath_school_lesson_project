@@ -177,7 +177,7 @@ class BibleSearchDelegate extends SearchDelegate {
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       // ✅ SEARCH: Filters by Standard ID ("Gen") in the selected Version
-      future: api.searchBible(query, bookId: initialBookId, version: searchVersion),
+      future: api.searchVerses(query, bookId: initialBookId, version: searchVersion),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
