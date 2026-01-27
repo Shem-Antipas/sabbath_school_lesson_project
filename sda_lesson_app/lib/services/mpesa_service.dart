@@ -4,8 +4,8 @@ import 'package:mpesa_flutter_plugin/mpesa_flutter_plugin.dart';
 class MpesaService {
   // ⚠️ SANDBOX CREDENTIALS (REPLACE WITH YOURS FROM DARAJA PORTAL)
   static const String consumerKey = "XpfykHAO4GE2PSdAQqdbG09IxWvADAO34nU6JkYuryDTCinB";
-  static const String consumerSecret = "YzDnKHJDTzvsc9qxtd4IjZ7SMtlALFmqKGpF28ZvWf2r5qsk4xBrGG2JT0uEyObvC";
-  static const String passKey = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"; // Default Sandbox Passkey
+  static const String consumerSecret = "TESt";
+  static const String passKey = "TEST"; // Default Sandbox Passkey
   static void initialize() {
     MpesaFlutterPlugin.setConsumerKey(consumerKey);
     MpesaFlutterPlugin.setConsumerSecret(consumerSecret);
@@ -33,7 +33,7 @@ class MpesaService {
         partyA: cleanPhone,
         partyB: "174379",
         // ⚠️ REQUIRED: Use a valid URL (e.g., from webhook.site) for testing
-        callBackURL: Uri.parse("https://sandbox.safaricom.co.ke/mpesa/"), 
+        callBackURL: Uri.parse("https://webhook.site/2d01f950-92e2-4a03-8650-460c1d3706ac"), 
         accountReference: "SDA Donation",
         phoneNumber: cleanPhone,
         baseUri: Uri.parse("https://sandbox.safaricom.co.ke/"),

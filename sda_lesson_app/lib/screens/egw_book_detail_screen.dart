@@ -92,6 +92,10 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   List<Chapter> _rawChapters = [];
   bool _isLoading = true;
 
+  // --- NEW: PROGRESS STATE ---
+  double _chapterProgress = 0.0; 
+  int _currentChapterNumber = 1;
+
   List<UserHighlight> _userHighlights = [];
   TextSelection? _currentSelection;
   int? _focusedItemIndex;
@@ -104,26 +108,66 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     super.initState();
     _loadAndProcessBook();
     _loadUserHighlights();
-    _itemPositionsListener.itemPositions.addListener(_saveReadingProgress);
+    // ✅ Updated listener to handle both progress calculation and saving
+    _itemPositionsListener.itemPositions.addListener(_onScrollUpdate);
   }
 
   @override
   void dispose() {
-    _itemPositionsListener.itemPositions.removeListener(_saveReadingProgress);
+    _itemPositionsListener.itemPositions.removeListener(_onScrollUpdate);
     super.dispose();
   }
 
-  Future<void> _saveReadingProgress() async {
+  // ✅ NEW: Logic to calculate progress within the SPECIFIC CHAPTER
+  void _onScrollUpdate() {
     final positions = _itemPositionsListener.itemPositions.value;
-    if (positions.isNotEmpty) {
-      final firstVisible = positions
-          .where((ItemPosition position) => position.itemTrailingEdge > 0)
-          .reduce((min, position) => position.itemLeadingEdge < min.itemLeadingEdge ? position : min);
+    if (positions.isEmpty || _flatItems.isEmpty) return;
 
-      int currentIndex = firstVisible.index;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_read_index_${widget.bookMeta.id}', currentIndex);
+    // 1. Find the top visible item
+    final firstVisible = positions
+        .where((ItemPosition position) => position.itemTrailingEdge > 0)
+        .reduce((min, position) => position.itemLeadingEdge < min.itemLeadingEdge ? position : min);
+
+    int currentIndex = firstVisible.index;
+    int currentChapterIdx = _flatItems[currentIndex].chapterIndex;
+
+    // 2. Find Boundaries of the Current Chapter
+    // Start: The index where this chapter's header is located
+    int chapterStartIndex = _flatItems.indexWhere((item) => 
+        item.chapterIndex == currentChapterIdx && item.type == ItemType.header);
+    if (chapterStartIndex == -1) chapterStartIndex = 0; // Fallback
+
+    // End: The index just before the NEXT chapter starts (or the end of the book)
+    int nextChapterStartIndex = _flatItems.indexWhere((item) => 
+        item.chapterIndex == currentChapterIdx + 1 && item.type == ItemType.header);
+    
+    int chapterEndIndex = (nextChapterStartIndex == -1) 
+        ? _flatItems.length - 1 
+        : nextChapterStartIndex - 1;
+
+    // 3. Calculate Percentage (0.0 to 1.0) relative to this chapter
+    int totalChapterItems = chapterEndIndex - chapterStartIndex;
+    double localProgress = 0.0;
+
+    if (totalChapterItems > 0) {
+      localProgress = (currentIndex - chapterStartIndex) / totalChapterItems;
     }
+
+    // 4. Update State if Changed
+    if (localProgress != _chapterProgress || currentChapterIdx + 1 != _currentChapterNumber) {
+      setState(() {
+        _chapterProgress = localProgress.clamp(0.0, 1.0);
+        _currentChapterNumber = currentChapterIdx + 1;
+      });
+    }
+
+    // 5. Save Last Read Position
+    _saveLastReadPosition(currentIndex);
+  }
+
+  Future<void> _saveLastReadPosition(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_read_index_${widget.bookMeta.id}', index);
   }
 
   Future<void> _loadUserHighlights() async {
@@ -340,17 +384,14 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   void _handleInitialNavigation() async {
     int targetIndex = -1;
 
-    // A. Direct Item Index (Exact Search Result)
     if (widget.initialIndex != -1) {
       targetIndex = widget.initialIndex;
     } 
-    // B. Chapter Index (Navigation from TOC)
     else if (widget.initialChapterIndex != -1) {
       targetIndex = _flatItems.indexWhere((item) => 
         item.chapterIndex == widget.initialChapterIndex && item.type == ItemType.header
       );
     } 
-    // C. Resume Reading
     else {
       final prefs = await SharedPreferences.getInstance();
       targetIndex = prefs.getInt('last_read_index_${widget.bookMeta.id}') ?? 0;
@@ -361,9 +402,8 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     }
   }
 
-  // --- FIX: ALIGNMENT SET TO 0.0 TO HIDE PREVIOUS CHAPTER ---
   void _scrollToIndex(int index) {
-    const double alignment = 0.0; // Snap to very top
+    const double alignment = 0.0; 
 
     if (_itemScrollController.isAttached) {
       _itemScrollController.jumpTo(index: index, alignment: alignment);
@@ -476,6 +516,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
     final appBarColor = isDark ? Colors.grey[900] : const Color(0xFF06275C);
 
     return Scaffold(
@@ -542,55 +583,110 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : ScrollablePositionedList.builder(
-              itemScrollController: _itemScrollController,
-              itemPositionsListener: _itemPositionsListener,
-              itemCount: _flatItems.length,
-              itemBuilder: (context, index) {
-                final item = _flatItems[index];
+          : Stack(
+              children: [
+                // 1. The Main Content List
+                ScrollablePositionedList.builder(
+                  itemScrollController: _itemScrollController,
+                  itemPositionsListener: _itemPositionsListener,
+                  itemCount: _flatItems.length,
+                  itemBuilder: (context, index) {
+                    final item = _flatItems[index];
 
-                return Padding(
-                  padding: item.type == ItemType.header
-                      ? const EdgeInsets.fromLTRB(20, 40, 20, 20)
-                      : const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: SelectableText.rich(
-                    TextSpan(
-                      children: _buildComplexText(context, index, item, widget.searchQuery),
+                    return Padding(
+                      padding: item.type == ItemType.header
+                          ? const EdgeInsets.fromLTRB(20, 40, 20, 20)
+                          : const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      child: SelectableText.rich(
+                        TextSpan(
+                          children: _buildComplexText(context, index, item, widget.searchQuery),
+                        ),
+                        textAlign: item.type == ItemType.header ? TextAlign.center : TextAlign.justify,
+                        onSelectionChanged: (selection, cause) {
+                          _currentSelection = selection;
+                          _focusedItemIndex = index;
+                        },
+                        contextMenuBuilder: (context, editableTextState) {
+                          return AdaptiveTextSelectionToolbar(
+                            anchors: editableTextState.contextMenuAnchors,
+                            children: [
+                              TextSelectionToolbarTextButton(
+                                padding: const EdgeInsets.all(12.0),
+                                onPressed: () {
+                                  editableTextState.copySelection(SelectionChangedCause.toolbar);
+                                },
+                                child: const Icon(Icons.copy, size: 20),
+                              ),
+                              _buildColorButton(index, "0xFF81C784", Colors.green, editableTextState), 
+                              _buildColorButton(index, "0xFFFFF59D", Colors.yellow, editableTextState), 
+                              _buildColorButton(index, "0xFF64B5F6", Colors.blue, editableTextState), 
+                              _buildColorButton(index, "0xFFF06292", Colors.pink, editableTextState), 
+                              TextSelectionToolbarTextButton(
+                                padding: const EdgeInsets.all(12.0),
+                                onPressed: () {
+                                  _clearHighlightsForItem(index);
+                                  editableTextState.hideToolbar();
+                                },
+                                child: const Icon(Icons.format_clear, size: 20, color: Colors.red),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    );
+                  },
+                ),
+
+                // 2. ✅ Vertical Scroll Progress Bar (Right Side)
+                Positioned(
+                  right: 2, // Stick to the right edge
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 6, // Thickness of the bar
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.grey[800] : Colors.grey[300], // Track color
+                      borderRadius: BorderRadius.circular(3),
                     ),
-                    textAlign: item.type == ItemType.header ? TextAlign.center : TextAlign.justify,
-                    onSelectionChanged: (selection, cause) {
-                      _currentSelection = selection;
-                      _focusedItemIndex = index;
-                    },
-                    contextMenuBuilder: (context, editableTextState) {
-                      return AdaptiveTextSelectionToolbar(
-                        anchors: editableTextState.contextMenuAnchors,
-                        children: [
-                          TextSelectionToolbarTextButton(
-                            padding: const EdgeInsets.all(12.0),
-                            onPressed: () {
-                              editableTextState.copySelection(SelectionChangedCause.toolbar);
-                            },
-                            child: const Icon(Icons.copy, size: 20),
+                    child: Align(
+                      alignment: Alignment.topCenter, // Fill from top
+                      child: FractionallySizedBox(
+                        heightFactor: _chapterProgress == 0 ? 0.01 : _chapterProgress, // The progress height
+                        widthFactor: 1.0,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            // Active progress color
+                            color: colorScheme.primary, 
+                            borderRadius: BorderRadius.circular(3),
                           ),
-                          _buildColorButton(index, "0xFF81C784", Colors.green, editableTextState), 
-                          _buildColorButton(index, "0xFFFFF59D", Colors.yellow, editableTextState), 
-                          _buildColorButton(index, "0xFF64B5F6", Colors.blue, editableTextState), 
-                          _buildColorButton(index, "0xFFF06292", Colors.pink, editableTextState), 
-                          TextSelectionToolbarTextButton(
-                            padding: const EdgeInsets.all(12.0),
-                            onPressed: () {
-                              _clearHighlightsForItem(index);
-                              editableTextState.hideToolbar();
-                            },
-                            child: const Icon(Icons.format_clear, size: 20, color: Colors.red),
-                          ),
-                        ],
-                      );
-                    },
+                        ),
+                      ),
+                    ),
                   ),
-                );
-              },
+                ),
+
+                // 3. ✅ Optional Chapter Indicator (Fades out while reading)
+                Positioned(
+                  top: 10,
+                  right: 15,
+                  child: AnimatedOpacity(
+                    opacity: _chapterProgress > 0.05 ? 0.0 : 1.0, // Hide when reading starts
+                    duration: const Duration(milliseconds: 300),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        "Chapter $_currentChapterNumber",
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
     );
   }

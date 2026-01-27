@@ -1,14 +1,18 @@
 class Lesson {
   final String id;
   final String title;
+  final String startDate; // ✅ camelCase
+  final String endDate;   // ✅ camelCase
   final String? subtitle;
-  final String? cover; // This is the field used for the header image
+  final String? cover;
   final String? index;
   final String? path;
 
   Lesson({
     required this.id,
     required this.title,
+    required this.startDate,
+    required this.endDate,
     this.subtitle,
     this.cover,
     this.index,
@@ -18,8 +22,10 @@ class Lesson {
   factory Lesson.fromJson(Map<String, dynamic> json) {
     return Lesson(
       id: json['id'] as String? ?? '',
-      // Ensures the title is never null to prevent UI errors
       title: json['title'] as String? ?? 'Untitled Lesson',
+      // Map JSON 'start_date' -> Dart 'startDate'
+      startDate: json['start_date'] as String? ?? '', 
+      endDate: json['end_date'] as String? ?? '',
       subtitle: json['subtitle'] as String?,
       cover: json['cover'] as String?,
       index: json['index'] as String?,
@@ -31,6 +37,8 @@ class Lesson {
     return {
       'id': id,
       'title': title,
+      'start_date': startDate,
+      'end_date': endDate,
       'subtitle': subtitle,
       'cover': cover,
       'index': index,

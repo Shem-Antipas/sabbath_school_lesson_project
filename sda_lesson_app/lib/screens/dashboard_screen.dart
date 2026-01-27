@@ -34,30 +34,122 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  // State variable for the verse
   DailyVerse _todayVerse = DailyVerseService.getPlaceholderVerse();
+  
+  // ✅ 1. LOADING STATE (Replaces the dialog)
+  bool _isLessonLoading = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _checkAndShowNewYearPopup();
-      if (mounted) {
-        await _checkAndShowSabbathPopup();
-      }
-      // Refresh user with safety check
+      if (mounted) await _checkAndShowSabbathPopup();
       _refreshUser();
-
-      // Initialize service and fetch verse asynchronously
       await DailyVerseService.init();
       final verse = await DailyVerseService.getTodayVerse();
-
-      if (mounted) {
-        setState(() {
-          _todayVerse = verse;
-        });
-      }
+      if (mounted) setState(() => _todayVerse = verse);
     });
+  }
+
+  // ✅ 2. NAVIGATION LOGIC (Uses _isLessonLoading)
+  Future<void> _handleIntelligentLessonNavigation(BuildContext context, dynamic quarterly) async {
+    // Start Loading
+    setState(() => _isLessonLoading = true);
+
+    try {
+      final lessons = await ref.read(lessonListProvider(quarterly.id).future);
+      
+      final DateTime now = DateTime.now();
+      final DateTime today = DateTime(now.year, now.month, now.day);
+      final DateFormat dateFormat = DateFormat("dd/MM/yyyy");
+
+      dynamic matchedLesson;
+      
+      for (var lesson in lessons) {
+        try {
+          final DateTime start = dateFormat.parse(lesson.startDate);
+          final DateTime end = dateFormat.parse(lesson.endDate);
+
+          if ((today.isAtSameMomentAs(start) || today.isAfter(start)) &&
+              (today.isAtSameMomentAs(end) || today.isBefore(end))) {
+            matchedLesson = lesson;
+            break;
+          }
+        } catch (e) {
+          debugPrint("Date Parsing Error: $e");
+        }
+      }
+
+      String? targetReadId;
+      String? targetTitle;
+
+      if (matchedLesson != null) {
+        final DateTime lessonStart = dateFormat.parse(matchedLesson.startDate);
+        final int dayDifference = today.difference(lessonStart).inDays;
+        
+        int dayIndex = dayDifference + 1;
+        if (dayIndex < 1) dayIndex = 1;
+        if (dayIndex > 7) dayIndex = 7;
+
+        final String dayString = dayIndex.toString().padLeft(2, '0');
+        
+        // Clean URL Logic
+        String cleanQId = quarterly.id.replaceAll('quarterlies/', '');
+        if (!cleanQId.startsWith('en/')) cleanQId = "en/$cleanQId";
+
+        String lessonIndex = matchedLesson.id;
+        if (lessonIndex.contains('/')) {
+          lessonIndex = lessonIndex.split('/').last;
+        }
+
+        targetReadId = "$cleanQId/$lessonIndex/$dayString";
+        targetTitle = matchedLesson.title;
+      }
+
+      // Stop Loading BEFORE navigation
+      if (mounted) setState(() => _isLessonLoading = false);
+
+      if (context.mounted) {
+        if (targetReadId != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ReaderScreen(
+                lessonIndex: targetReadId!, 
+                lessonTitle: targetTitle!,
+              ),
+            ),
+          );
+        } else {
+          // Fallback to list
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LessonListScreen(
+                quarterlyId: quarterly.id,
+                quarterlyTitle: quarterly.title,
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Nav Error: $e");
+      if (mounted) setState(() => _isLessonLoading = false);
+      
+      // Fallback on error
+      if (context.mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => LessonListScreen(
+              quarterlyId: quarterly.id,
+              quarterlyTitle: quarterly.title,
+            ),
+          ),
+        );
+      }
+    }
   }
 
   // Crash-proof user refresh
@@ -71,98 +163,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       }
       if (mounted) setState(() {});
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // NEW YEAR POPUP LOGIC
-  // ---------------------------------------------------------------------------
-  Future<void> _checkAndShowNewYearPopup() async {
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-
-    if (now.month != 1) return;
-
-    const String lastOpenDateKey = 'last_open_date';
-    const String firstOpenTimeKey = 'first_open_timestamp';
-    const String secondPopupShownKey = 'second_popup_shown';
-
-    final String todayString = "${now.year}-${now.month}-${now.day}";
-    final String? lastOpenDate = prefs.getString(lastOpenDateKey);
-
-    bool shouldShowPopup = false;
-
-    if (lastOpenDate != todayString) {
-      shouldShowPopup = true;
-      await prefs.setString(lastOpenDateKey, todayString);
-      await prefs.setInt(firstOpenTimeKey, now.millisecondsSinceEpoch);
-      await prefs.setBool(secondPopupShownKey, false);
-    } else {
-      final int? firstOpenTime = prefs.getInt(firstOpenTimeKey);
-      final bool secondPopupShown = prefs.getBool(secondPopupShownKey) ?? false;
-
-      if (firstOpenTime != null && !secondPopupShown) {
-        final firstOpenDate = DateTime.fromMillisecondsSinceEpoch(
-          firstOpenTime,
-        );
-        if (now.difference(firstOpenDate).inHours >= 3) {
-          shouldShowPopup = true;
-          await prefs.setBool(secondPopupShownKey, true);
-        }
-      }
-    }
-
-    if (shouldShowPopup && mounted) {
-      _showNewYearDialog();
-    }
-  }
-
-  void _showNewYearDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF06275C),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.celebration, color: Colors.amber, size: 60),
-            const SizedBox(height: 15),
-            const Text(
-              "Happy New Year!",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              "May this year bring you joy, success, and divine blessings as you study His word.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 16),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xFF06275C),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 30,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-              ),
-              child: const Text("Amen"),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -438,6 +438,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         );
                       }
                       final currentQuarterly = quarterlies.first;
+                      // ✅ 3. USE THE SINGLE CORRECT BUILDER HERE
                       return _buildSabbathSchoolCard(
                         context,
                         currentQuarterly,
@@ -579,15 +580,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // --- NEW: DONATE CARD WIDGET ---
   Widget _buildDonateCard(BuildContext context, bool isDark) {
-    // Brand Colors
-    const brandCyan = Color(0xFF00A8E8);
-    const brandNavy = Color(0xFF06275C);
-    
-    final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
+    final colorScheme = Theme.of(context).colorScheme;
+    final primaryColor = colorScheme.primary;
+    final secondaryColor = colorScheme.secondary;
+    final textColor = colorScheme.onSurface;
+    final subTextColor = textColor.withOpacity(0.6);
+    final cardBg = isDark ? colorScheme.surfaceContainerHighest : Colors.white;
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -596,7 +595,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
             blurRadius: 15,
             offset: const Offset(0, 5),
           ),
@@ -605,10 +604,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             "DONATE", 
             style: TextStyle(
-              color: brandCyan, 
+              color: secondaryColor, 
               fontWeight: FontWeight.bold, 
               fontSize: 12, 
               letterSpacing: 1.5
@@ -644,8 +643,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: brandCyan, 
-                foregroundColor: Colors.white,
+                backgroundColor: primaryColor, 
+                foregroundColor: colorScheme.onPrimary,
                 elevation: 0,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
               ),
@@ -657,11 +656,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  Widget _buildSabbathSchoolCard(
-    BuildContext context,
-    dynamic quarterly,
-    bool isDark,
-  ) {
+  // ✅ 4. SINGLE DEFINITION OF THIS CARD
+  Widget _buildSabbathSchoolCard(BuildContext context, dynamic quarterly, bool isDark) {
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
@@ -670,106 +666,32 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5))],
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 12,
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         leading: Container(
           width: 50,
           height: 50,
           decoration: BoxDecoration(
             color: const Color(0xFF7D2D3B).withOpacity(0.1),
             borderRadius: BorderRadius.circular(12),
-            image: DecorationImage(
-              image: NetworkImage(quarterly.fullCoverUrl),
-              fit: BoxFit.cover,
-            ),
+            image: DecorationImage(image: NetworkImage(quarterly.fullCoverUrl), fit: BoxFit.cover),
           ),
         ),
-        title: Text(
-          quarterly.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: textColor,
-          ),
-        ),
-        subtitle: Text(
-          quarterly.humanDate,
-          style: TextStyle(color: subTextColor),
-        ),
-        trailing: const Icon(
-          Icons.arrow_forward_ios,
-          size: 16,
-          color: Colors.grey,
-        ),
-        // ✅ INTELLIGENT STUDY CLICK
-        onTap: () {
-          _handleIntelligentLessonNavigation(context, quarterly);
-        },
+        title: Text(quarterly.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)),
+        subtitle: Text(quarterly.humanDate, style: TextStyle(color: subTextColor)),
+        
+        // SWITCH ICON WITH SPINNER IF LOADING
+        trailing: _isLessonLoading
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+            
+        onTap: _isLessonLoading 
+            ? null // Disable click while loading
+            : () => _handleIntelligentLessonNavigation(context, quarterly),
       ),
     );
-  }
-
-  // ✅ INTELLIGENT NAVIGATION LOGIC
-  void _handleIntelligentLessonNavigation(
-    BuildContext context,
-    dynamic quarterly,
-  ) {
-    // Attempt to open ReaderScreen for "Today's Lesson"
-    // Use try-catch to ensure we don't crash if ID format varies
-    try {
-      final DateTime now = DateTime.now();
-      // NOTE: Adjust this ID format based on your specific Quarterly Data structure.
-      // Standard Format: "quarterlyID/lessonIndex/dayIndex"
-      // Example: "en/cq/2024-01/05"
-      // Since we can't reliably guess the ID without the lesson list loaded,
-      // we default to opening the List Screen for safety, but here is where
-      // you would swap it to ReaderScreen if you had the 'todayLessonId'.
-
-      /* // Example of direct reader navigation if ID is known:
-      final String todayId = "${quarterly.id}/01"; // Placeholder
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ReaderScreen(lessonIndex: todayId, lessonTitle: "Today's Lesson"),
-        ),
-      ); 
-      */
-
-      // Fallback to List Screen (Safest user experience for now)
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => LessonListScreen(
-            quarterlyId: quarterly.id,
-            quarterlyTitle: quarterly.title,
-          ),
-        ),
-      );
-    } catch (e) {
-      // If anything fails, open the list
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => LessonListScreen(
-            quarterlyId: quarterly.id,
-            quarterlyTitle: quarterly.title,
-          ),
-        ),
-      );
-    }
   }
 
   Widget _buildQuickStudyGrid(BuildContext context) {
@@ -901,7 +823,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // Handle automatic navigation to a verse
   void _handleVerseNavigation(String reference) {
     debugPrint("Attempting to parse reference: $reference");
 
@@ -993,7 +914,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return map[name] ?? (name.length >= 3 ? name.substring(0, 3).toUpperCase() : name.toUpperCase());
   }
 }
-
 class _SectionLabel extends StatelessWidget {
   final String label;
   const _SectionLabel({required this.label});

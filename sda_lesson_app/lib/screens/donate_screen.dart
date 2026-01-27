@@ -1,30 +1,34 @@
 import 'package:flutter/material.dart';
-import '../services/mpesa_service.dart'; // ✅ Imported M-Pesa Service
+import 'package:url_launcher/url_launcher.dart';
 
 class DonateScreen extends StatelessWidget {
   const DonateScreen({super.key});
 
+  final String paystackUrl = 'https://paystack.shop/pay/adventstudyhub';
+
   @override
   Widget build(BuildContext context) {
+    // ✅ Use the current theme's color scheme
+    final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    // ✅ Brand Colors
-    const Color navyBlue = Color(0xFF06275C);
-    const Color brandCyan = Color(0xFF00A8E8);
-    
-    final backgroundColor = isDark ? const Color(0xFF121212) : const Color(0xFFFAFAFA);
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : navyBlue;
-    final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
+    // ✅ Automatically adjusts to light/dark mode
+    final Color primaryBrand = colorScheme.primary;
+    final Color secondaryBrand = colorScheme.secondary;
+    final Color surfaceColor = colorScheme.surface;
+    final Color onSurfaceColor = colorScheme.onSurface;
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: surfaceColor,
       appBar: AppBar(
-        title: Text("Support the Ministry", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+        title: Text(
+          "Support the Ministry", 
+          style: TextStyle(color: onSurfaceColor, fontWeight: FontWeight.bold)
+        ),
         centerTitle: true,
-        backgroundColor: backgroundColor,
+        backgroundColor: surfaceColor,
         elevation: 0,
-        iconTheme: IconThemeData(color: textColor),
+        iconTheme: IconThemeData(color: onSurfaceColor),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20),
@@ -34,15 +38,19 @@ class DonateScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(32),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [navyBlue, Color(0xFF0A3A80)],
+                // ✅ Using a gradient derived from the theme's primary color
+                gradient: LinearGradient(
+                  colors: [
+                    primaryBrand,
+                    primaryBrand.withOpacity(0.8),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: [
                   BoxShadow(
-                    color: navyBlue.withOpacity(0.3),
+                    color: primaryBrand.withOpacity(0.2),
                     blurRadius: 20,
                     offset: const Offset(0, 10),
                   ),
@@ -53,10 +61,10 @@ class DonateScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
+                      color: Colors.white.withOpacity(0.15),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.favorite_rounded, size: 50, color: brandCyan),
+                    child: Icon(Icons.favorite_rounded, size: 50, color: secondaryBrand),
                   ),
                   const SizedBox(height: 24),
                   const Text(
@@ -90,9 +98,9 @@ class DonateScreen extends StatelessWidget {
               subtitle: "Sustain the ministry with a recurring gift.",
               buttonText: "DONATE MONTHLY",
               isPrimary: true,
-              brandColor: brandCyan,
-              cardColor: cardColor,
-              textColor: textColor,
+              brandColor: primaryBrand,
+              cardColor: isDark ? colorScheme.surfaceContainerHighest : Colors.white,
+              textColor: onSurfaceColor,
             ),
 
             const SizedBox(height: 20),
@@ -103,9 +111,9 @@ class DonateScreen extends StatelessWidget {
               subtitle: "Make a single contribution today.",
               buttonText: "DONATE ONCE",
               isPrimary: false,
-              brandColor: brandCyan,
-              cardColor: cardColor,
-              textColor: textColor,
+              brandColor: primaryBrand,
+              cardColor: isDark ? colorScheme.surfaceContainerHighest : Colors.white,
+              textColor: onSurfaceColor,
             ),
 
             const SizedBox(height: 40),
@@ -114,11 +122,15 @@ class DonateScreen extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.lock_outline_rounded, size: 16, color: subTextColor),
+                Icon(Icons.lock_outline_rounded, size: 16, color: onSurfaceColor.withOpacity(0.5)),
                 const SizedBox(width: 8),
                 Text(
                   "Secure Payment Processing",
-                  style: TextStyle(color: subTextColor, fontSize: 13, fontWeight: FontWeight.w500),
+                  style: TextStyle(
+                    color: onSurfaceColor.withOpacity(0.5), 
+                    fontSize: 13, 
+                    fontWeight: FontWeight.w500
+                  ),
                 ),
               ],
             ),
@@ -146,7 +158,7 @@ class DonateScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: isPrimary 
             ? Border.all(color: brandColor.withOpacity(0.5), width: 2)
-            : Border.all(color: Colors.grey.withOpacity(0.1)),
+            : Border.all(color: textColor.withOpacity(0.05)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -175,7 +187,7 @@ class DonateScreen extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                    style: TextStyle(fontSize: 13, color: textColor.withOpacity(0.6)),
                   ),
                 ],
               ),
@@ -198,8 +210,7 @@ class DonateScreen extends StatelessWidget {
             width: double.infinity,
             height: 50,
             child: ElevatedButton(
-              // ✅ UPDATED: Calls the payment dialog
-              onPressed: () => _showPaymentDialog(context, title),
+              onPressed: () => _openPaystackDonation(context),
               style: ElevatedButton.styleFrom(
                 backgroundColor: isPrimary ? brandColor : Colors.transparent,
                 foregroundColor: isPrimary ? Colors.white : brandColor,
@@ -218,132 +229,18 @@ class DonateScreen extends StatelessWidget {
     );
   }
 
-  // ✅ UPDATED: Payment Dialog with M-Pesa Logic
-  void _showPaymentDialog(BuildContext context, String donationType) {
-    final TextEditingController phoneController = TextEditingController();
-    final TextEditingController amountController = TextEditingController();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    // Theme Colors for Dialog
-    final dialogBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : const Color(0xFF06275C);
-    const brandCyan = Color(0xFF00A8E8);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: dialogBg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          "Make a Donation", 
-          style: TextStyle(color: textColor, fontWeight: FontWeight.bold)
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              "Enter your details to proceed with M-Pesa secure payment.",
-              style: TextStyle(fontSize: 13, color: isDark ? Colors.grey[400] : Colors.grey[600]),
-            ),
-            const SizedBox(height: 20),
-            
-            // Amount Field
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              style: TextStyle(color: textColor),
-              decoration: InputDecoration(
-                labelText: "Amount (KES)",
-                labelStyle: TextStyle(color: isDark ? Colors.grey : Colors.blueGrey),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: const BorderSide(color: brandCyan, width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                prefixIcon: const Icon(Icons.attach_money, color: brandCyan),
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Phone Field
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              style: TextStyle(color: textColor),
-              decoration: InputDecoration(
-                labelText: "M-Pesa Phone (e.g. 0712...)",
-                labelStyle: TextStyle(color: isDark ? Colors.grey : Colors.blueGrey),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: const BorderSide(color: brandCyan, width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                prefixIcon: const Icon(Icons.phone_android, color: brandCyan),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text("Cancel", style: TextStyle(color: isDark ? Colors.grey : Colors.grey[700])),
-          ),
-          
-          // ✅ INTEGRATED "PAY NOW" BUTTON
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: brandCyan,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            ),
-            onPressed: () async {
-              // 1. Validation
-              if (phoneController.text.isEmpty || amountController.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Please enter both amount and phone number.")),
-                );
-                return;
-              }
-
-              Navigator.pop(context); // Close dialog
-
-              // 2. Show Processing Message
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Processing M-Pesa Request... Check your phone."), 
-                  duration: Duration(seconds: 4),
-                  backgroundColor: Colors.blue,
-                ),
-              );
-
-              // 3. Call M-Pesa Service
-              try {
-                await MpesaService.startSTKPush(
-                  context: context,
-                  phoneNumber: phoneController.text,
-                  amount: double.parse(amountController.text),
-                );
-                
-                // Note: The actual success confirmation comes via Callback (Webhook),
-                // not immediately here. This just means the popup was sent.
-                
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-                );
-              }
-            },
-            child: const Text("Pay Now", style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
+  Future<void> _openPaystackDonation(BuildContext context) async {
+    final Uri url = Uri.parse(paystackUrl);
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not open donation page';
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    }
   }
 }

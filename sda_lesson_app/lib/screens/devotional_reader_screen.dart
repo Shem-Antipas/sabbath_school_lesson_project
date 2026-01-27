@@ -75,9 +75,11 @@ class _DevotionalReaderScreenState
     extends ConsumerState<DevotionalReaderScreen> {
   PageController? _pageController;
 
-  // FIX: Make this late so we can init it in initState
   late int _currentDay;
   bool _isInit = true;
+  
+  // ✅ NEW: Progress State
+  double _readingProgress = 0.0;
 
   // Search Scrolling
   final GlobalKey _highlightKey = GlobalKey();
@@ -85,14 +87,12 @@ class _DevotionalReaderScreenState
   // Highlighting State
   List<DevotionalHighlight> _userHighlights = [];
   TextSelection? _currentSelection;
-  int? _focusedParagraphIndex; // Tracks which paragraph user is selecting
+  int? _focusedParagraphIndex; 
 
   @override
   void initState() {
     super.initState();
-    // FIX: Initialize _currentDay immediately with the passed initialDay
     _currentDay = widget.initialDay;
-
     _loadUserHighlights();
     _saveReadingProgress(widget.initialDay);
   }
@@ -101,7 +101,6 @@ class _DevotionalReaderScreenState
 
   Future<void> _saveReadingProgress(int day) async {
     final prefs = await SharedPreferences.getInstance();
-    // Save distinct progress per book
     await prefs.setInt('last_read_day_${widget.bookId}', day);
     await prefs.setInt('last_read_month_${widget.bookId}', widget.monthIndex);
   }
@@ -128,7 +127,6 @@ class _DevotionalReaderScreenState
   ) async {
     if (!selection.isValid || selection.isCollapsed) return;
 
-    // Remove overlapping highlights for cleanliness
     _userHighlights.removeWhere(
       (h) =>
           h.bookId == widget.bookId &&
@@ -185,6 +183,7 @@ class _DevotionalReaderScreenState
     final asyncData = ref.watch(devotionalContentProvider(widget.bookId));
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
     final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
     final textColor = isDark ? Colors.grey[200] : Colors.grey[900];
     final verseColor = isDark ? Colors.grey[400] : Colors.grey[700];
@@ -192,7 +191,6 @@ class _DevotionalReaderScreenState
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        // FIX: This now uses the correctly initialized _currentDay
         title: Text(
           "${widget.monthName} $_currentDay",
           style: TextStyle(color: isDark ? Colors.white : Colors.black),
@@ -232,213 +230,266 @@ class _DevotionalReaderScreenState
           if (monthReadings.isEmpty)
             return const Center(child: Text("No content."));
 
-          // Initialize PageController only once
           if (_isInit) {
             int initialIndex = monthReadings.indexWhere(
               (r) => r.day == widget.initialDay,
             );
             if (initialIndex == -1) initialIndex = 0;
             _pageController = PageController(initialPage: initialIndex);
-
-            // We do NOT set _currentDay here anymore because
-            // it was already set in initState.
-
             _isInit = false;
           }
 
-          return PageView.builder(
-            controller: _pageController,
-            itemCount: monthReadings.length,
-            // FIX: Ensure setState is called here to rebuild the AppBar title
-            onPageChanged: (index) {
-              final newDay = monthReadings[index].day;
-              if (_currentDay != newDay) {
-                setState(() {
-                  _currentDay = newDay;
-                  _currentSelection = null;
-                });
-                _saveReadingProgress(_currentDay);
-              }
-            },
-            itemBuilder: (context, index) {
-              final reading = monthReadings[index];
-              final List<String> cleanParagraphs = _reflowText(reading.content);
+          // ✅ UPDATED: Stack to overlay Progress Bar
+          return Stack(
+            children: [
+              PageView.builder(
+                controller: _pageController,
+                itemCount: monthReadings.length,
+                onPageChanged: (index) {
+                  final newDay = monthReadings[index].day;
+                  if (_currentDay != newDay) {
+                    setState(() {
+                      _currentDay = newDay;
+                      _currentSelection = null;
+                      _readingProgress = 0.0; // Reset progress on page flip
+                    });
+                    _saveReadingProgress(_currentDay);
+                  }
+                },
+                itemBuilder: (context, index) {
+                  final reading = monthReadings[index];
+                  final List<String> cleanParagraphs = _reflowText(reading.content);
 
-              return SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
-                ),
-                child: Column(
-                  children: [
-                    // TITLE
-                    SelectableText(
-                      reading.title.toUpperCase(),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        color: isDark
-                            ? Colors.tealAccent
-                            : const Color(0xFF7D2D3B),
-                        fontFamily: 'Serif',
-                        letterSpacing: 1.1,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // VERSE BOX
-                    if (reading.verse.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 30),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? Colors.grey[850]
-                              : const Color(0xFFF5F5F5),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border(
-                            left: BorderSide(color: Colors.teal, width: 4),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            SelectableText(
-                              reading.verse,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontStyle: FontStyle.italic,
-                                fontSize: 16,
-                                color: verseColor,
-                                height: 1.5,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              "- ${reading.verseRef}",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: isDark
-                                    ? Colors.teal[200]
-                                    : Colors.teal[800],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                    // PARAGRAPHS (With Custom Context Menu)
-                    ...List.generate(cleanParagraphs.length, (paraIndex) {
-                      final paraText = cleanParagraphs[paraIndex];
-
-                      // Check for search query match to trigger auto-scroll
-                      final bool containsSearch =
-                          widget.searchQuery != null &&
-                          widget.searchQuery!.isNotEmpty &&
-                          paraText.toLowerCase().contains(
-                            widget.searchQuery!.toLowerCase(),
-                          );
-
-                      if (containsSearch) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (_highlightKey.currentContext != null) {
-                            Scrollable.ensureVisible(
-                              _highlightKey.currentContext!,
-                              duration: const Duration(milliseconds: 600),
-                              curve: Curves.easeInOut,
-                              alignment: 0.3,
-                            );
-                          }
-                        });
+                  // ✅ ADDED: NotificationListener to capture scroll events
+                  return NotificationListener<ScrollNotification>(
+                    onNotification: (ScrollNotification notification) {
+                      // Only listen to vertical scroll of the content
+                      if (notification.metrics.axis == Axis.vertical) {
+                         final metrics = notification.metrics;
+                         final progress = metrics.maxScrollExtent == 0
+                             ? 1.0
+                             : metrics.pixels / metrics.maxScrollExtent;
+                         
+                         // Update state if changed significantly (optimization)
+                         if ((progress - _readingProgress).abs() > 0.01) {
+                           // Use Future.microtask to avoid setState during build
+                           Future.microtask(() {
+                             if (mounted) {
+                               setState(() {
+                                 _readingProgress = progress.clamp(0.0, 1.0);
+                               });
+                             }
+                           });
+                         }
                       }
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: Container(
-                          key: containsSearch ? _highlightKey : null,
-                          child: SelectableText.rich(
-                            TextSpan(
-                              children: _buildRichText(
-                                paraText,
-                                widget.searchQuery,
-                                paraIndex,
-                                textColor,
-                                isDark,
-                              ),
-                            ),
-                            textAlign: TextAlign.justify,
+                      return false;
+                    },
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                      child: Column(
+                        children: [
+                          // TITLE
+                          SelectableText(
+                            reading.title.toUpperCase(),
+                            textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 18,
-                              height: 1.8,
-                              color: textColor,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              color: isDark
+                                  ? Colors.tealAccent
+                                  : const Color(0xFF7D2D3B),
                               fontFamily: 'Serif',
+                              letterSpacing: 1.1,
                             ),
-                            onSelectionChanged: (selection, cause) {
-                              _currentSelection = selection;
-                              _focusedParagraphIndex = paraIndex;
-                            },
-                            contextMenuBuilder: (context, editableTextState) {
-                              return AdaptiveTextSelectionToolbar(
-                                anchors: editableTextState.contextMenuAnchors,
+                          ),
+                          const SizedBox(height: 24),
+
+                          // VERSE BOX
+                          if (reading.verse.isNotEmpty)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 30),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? Colors.grey[850]
+                                    : const Color(0xFFF5F5F5),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border(
+                                  left: BorderSide(color: Colors.teal, width: 4),
+                                ),
+                              ),
+                              child: Column(
                                 children: [
-                                  TextSelectionToolbarTextButton(
-                                    padding: const EdgeInsets.all(12.0),
-                                    onPressed: () {
-                                      editableTextState.copySelection(
-                                        SelectionChangedCause.toolbar,
-                                      );
-                                    },
-                                    child: const Icon(Icons.copy, size: 20),
+                                  SelectableText(
+                                    reading.verse,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      fontSize: 16,
+                                      color: verseColor,
+                                      height: 1.5,
+                                    ),
                                   ),
-                                  _buildColorButton(
-                                    paraIndex,
-                                    "0xFF81C784",
-                                    Colors.green,
-                                    editableTextState,
-                                  ),
-                                  _buildColorButton(
-                                    paraIndex,
-                                    "0xFFFFF59D",
-                                    Colors.yellow,
-                                    editableTextState,
-                                  ),
-                                  _buildColorButton(
-                                    paraIndex,
-                                    "0xFF64B5F6",
-                                    Colors.blue,
-                                    editableTextState,
-                                  ),
-                                  _buildColorButton(
-                                    paraIndex,
-                                    "0xFFF06292",
-                                    Colors.pink,
-                                    editableTextState,
-                                  ),
-                                  TextSelectionToolbarTextButton(
-                                    padding: const EdgeInsets.all(12.0),
-                                    onPressed: () {
-                                      _clearHighlightsForParagraph(paraIndex);
-                                      editableTextState.hideToolbar();
-                                    },
-                                    child: const Icon(
-                                      Icons.format_clear,
-                                      size: 20,
-                                      color: Colors.red,
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    "- ${reading.verseRef}",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: isDark
+                                          ? Colors.teal[200]
+                                          : Colors.teal[800],
                                     ),
                                   ),
                                 ],
-                              );
-                            },
-                          ),
+                              ),
+                            ),
+
+                          // PARAGRAPHS
+                          ...List.generate(cleanParagraphs.length, (paraIndex) {
+                            final paraText = cleanParagraphs[paraIndex];
+
+                            final bool containsSearch =
+                                widget.searchQuery != null &&
+                                widget.searchQuery!.isNotEmpty &&
+                                paraText.toLowerCase().contains(
+                                  widget.searchQuery!.toLowerCase(),
+                                );
+
+                            if (containsSearch) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (_highlightKey.currentContext != null) {
+                                  Scrollable.ensureVisible(
+                                    _highlightKey.currentContext!,
+                                    duration: const Duration(milliseconds: 600),
+                                    curve: Curves.easeInOut,
+                                    alignment: 0.3,
+                                  );
+                                }
+                              });
+                            }
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 16.0),
+                              child: Container(
+                                key: containsSearch ? _highlightKey : null,
+                                child: SelectableText.rich(
+                                  TextSpan(
+                                    children: _buildRichText(
+                                      paraText,
+                                      widget.searchQuery,
+                                      paraIndex,
+                                      textColor,
+                                      isDark,
+                                    ),
+                                  ),
+                                  textAlign: TextAlign.justify,
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    height: 1.8,
+                                    color: textColor,
+                                    fontFamily: 'Serif',
+                                  ),
+                                  onSelectionChanged: (selection, cause) {
+                                    _currentSelection = selection;
+                                    _focusedParagraphIndex = paraIndex;
+                                  },
+                                  contextMenuBuilder: (context, editableTextState) {
+                                    return AdaptiveTextSelectionToolbar(
+                                      anchors: editableTextState.contextMenuAnchors,
+                                      children: [
+                                        TextSelectionToolbarTextButton(
+                                          padding: const EdgeInsets.all(12.0),
+                                          onPressed: () {
+                                            editableTextState.copySelection(
+                                              SelectionChangedCause.toolbar,
+                                            );
+                                          },
+                                          child: const Icon(Icons.copy, size: 20),
+                                        ),
+                                        _buildColorButton(
+                                          paraIndex,
+                                          "0xFF81C784",
+                                          Colors.green,
+                                          editableTextState,
+                                        ),
+                                        _buildColorButton(
+                                          paraIndex,
+                                          "0xFFFFF59D",
+                                          Colors.yellow,
+                                          editableTextState,
+                                        ),
+                                        _buildColorButton(
+                                          paraIndex,
+                                          "0xFF64B5F6",
+                                          Colors.blue,
+                                          editableTextState,
+                                        ),
+                                        _buildColorButton(
+                                          paraIndex,
+                                          "0xFFF06292",
+                                          Colors.pink,
+                                          editableTextState,
+                                        ),
+                                        TextSelectionToolbarTextButton(
+                                          padding: const EdgeInsets.all(12.0),
+                                          onPressed: () {
+                                            _clearHighlightsForParagraph(paraIndex);
+                                            editableTextState.hideToolbar();
+                                          },
+                                          child: const Icon(
+                                            Icons.format_clear,
+                                            size: 20,
+                                            color: Colors.red,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
+                            );
+                          }),
+                          const SizedBox(height: 50),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+
+              // ✅ ADDED: Vertical Scroll Progress Bar (Right Side)
+              Positioned(
+                right: 2, // Stick to right edge
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 6, // Thickness
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.grey[800] : Colors.grey[300], // Track color
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: FractionallySizedBox(
+                      // Ensure minimal height so it's visible even at 0%
+                      heightFactor: _readingProgress == 0 ? 0.02 : _readingProgress, 
+                      widthFactor: 1.0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary, // Active fill color
+                          borderRadius: BorderRadius.circular(3),
                         ),
-                      );
-                    }),
-                    const SizedBox(height: 50),
-                  ],
+                      ),
+                    ),
+                  ),
                 ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),

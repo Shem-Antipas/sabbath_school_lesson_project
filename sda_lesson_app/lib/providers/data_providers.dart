@@ -6,6 +6,7 @@ import '../models/lesson.dart';
 
 // --- API SERVICE ---
 final apiProvider = Provider((ref) => ApiService());
+
 // --- QUARTERLIES ---
 final quarterlyListProvider = FutureProvider<List<Quarterly>>((ref) async {
   final api = ref.watch(apiProvider);
@@ -21,13 +22,18 @@ final lessonsProvider = FutureProvider.family<List<Lesson>, String>((
   return api.fetchLessons(quarterlyId);
 });
 
+// ✅ ADDED: Alias so DashboardScreen can find 'lessonListProvider'
+final lessonListProvider = lessonsProvider;
+
 // --- LESSON CONTENT (Merged & Optimized) ---
 final lessonContentProvider = FutureProvider.autoDispose
     .family<reader.LessonContent, String>((ref, lessonIndex) async {
       // Use the global apiProvider we just defined
       final apiService = ref.watch(apiProvider);
+      
       // Keep the provider alive for instant switching
       ref.keepAlive();
+      
       try {
         print("📡 Requesting content for: $lessonIndex");
 
@@ -57,4 +63,5 @@ final lessonContentProvider = FutureProvider.autoDispose
         );
       }
     });
-    final navIndexProvider = StateProvider<int>((ref) => 0);
+
+final navIndexProvider = StateProvider<int>((ref) => 0);
