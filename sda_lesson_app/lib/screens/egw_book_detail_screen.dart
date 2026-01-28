@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/book_meta.dart';
 
 // --- DATA MODELS ---
-enum ItemType { header, content }
+enum ItemType { header, content, navigation }
 
 class BookItem {
   final ItemType type;
@@ -32,12 +32,14 @@ class Chapter {
 }
 
 class UserHighlight {
+  final int chapterIndex; 
   final int itemIndex;
   final int startOffset;
   final int endOffset;
   final String colorHex;
 
   UserHighlight({
+    required this.chapterIndex,
     required this.itemIndex,
     required this.startOffset,
     required this.endOffset,
@@ -45,6 +47,7 @@ class UserHighlight {
   });
 
   Map<String, dynamic> toJson() => {
+    'chapterIndex': chapterIndex,
     'itemIndex': itemIndex,
     'startOffset': startOffset,
     'endOffset': endOffset,
@@ -52,6 +55,7 @@ class UserHighlight {
   };
 
   factory UserHighlight.fromJson(Map<String, dynamic> json) => UserHighlight(
+    chapterIndex: json['chapterIndex'] ?? 0,
     itemIndex: json['itemIndex'],
     startOffset: json['startOffset'],
     endOffset: json['endOffset'],
@@ -71,16 +75,16 @@ class RangeStyle {
 // --- MAIN SCREEN ---
 class EGWBookDetailScreen extends StatefulWidget {
   final BookMeta bookMeta;
-  final int initialIndex; // Exact paragraph index (for Search)
-  final int initialChapterIndex; // Chapter start index (for TOC)
+  final int initialChapterIndex; 
   final String? searchQuery;
+  final int initialIndex; 
 
   const EGWBookDetailScreen({
     super.key,
     required this.bookMeta,
-    this.initialIndex = -1,
-    this.initialChapterIndex = -1,
+    this.initialChapterIndex = 0,
     this.searchQuery,
+    this.initialIndex = 0,
   });
 
   @override
@@ -88,13 +92,16 @@ class EGWBookDetailScreen extends StatefulWidget {
 }
 
 class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
-  List<BookItem> _flatItems = [];
-  List<Chapter> _rawChapters = [];
+  // Current View Data
+  List<BookItem> _currentViewItems = [];
+  List<Chapter> _allChapters = [];
+  
   bool _isLoading = true;
-
-  // --- NEW: PROGRESS STATE ---
-  double _chapterProgress = 0.0; 
-  int _currentChapterNumber = 1;
+  int _currentChapterIndex = 0;
+  double _chapterProgress = 0.0;
+  
+  // Settings
+  double _fontSize = 18.0; 
 
   List<UserHighlight> _userHighlights = [];
   TextSelection? _currentSelection;
@@ -106,9 +113,15 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadAndProcessBook();
+    
+    if (widget.initialChapterIndex > 0) {
+      _currentChapterIndex = widget.initialChapterIndex;
+    } else {
+      _currentChapterIndex = 0; 
+    }
+
+    _loadBookData();
     _loadUserHighlights();
-    // ✅ Updated listener to handle both progress calculation and saving
     _itemPositionsListener.itemPositions.addListener(_onScrollUpdate);
   }
 
@@ -118,56 +131,36 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     super.dispose();
   }
 
-  // ✅ NEW: Logic to calculate progress within the SPECIFIC CHAPTER
   void _onScrollUpdate() {
     final positions = _itemPositionsListener.itemPositions.value;
-    if (positions.isEmpty || _flatItems.isEmpty) return;
+    if (positions.isEmpty || _currentViewItems.isEmpty) return;
 
-    // 1. Find the top visible item
     final firstVisible = positions
         .where((ItemPosition position) => position.itemTrailingEdge > 0)
         .reduce((min, position) => position.itemLeadingEdge < min.itemLeadingEdge ? position : min);
 
     int currentIndex = firstVisible.index;
-    int currentChapterIdx = _flatItems[currentIndex].chapterIndex;
+    int totalItems = _currentViewItems.length;
 
-    // 2. Find Boundaries of the Current Chapter
-    // Start: The index where this chapter's header is located
-    int chapterStartIndex = _flatItems.indexWhere((item) => 
-        item.chapterIndex == currentChapterIdx && item.type == ItemType.header);
-    if (chapterStartIndex == -1) chapterStartIndex = 0; // Fallback
-
-    // End: The index just before the NEXT chapter starts (or the end of the book)
-    int nextChapterStartIndex = _flatItems.indexWhere((item) => 
-        item.chapterIndex == currentChapterIdx + 1 && item.type == ItemType.header);
-    
-    int chapterEndIndex = (nextChapterStartIndex == -1) 
-        ? _flatItems.length - 1 
-        : nextChapterStartIndex - 1;
-
-    // 3. Calculate Percentage (0.0 to 1.0) relative to this chapter
-    int totalChapterItems = chapterEndIndex - chapterStartIndex;
     double localProgress = 0.0;
-
-    if (totalChapterItems > 0) {
-      localProgress = (currentIndex - chapterStartIndex) / totalChapterItems;
+    if (totalItems > 0) {
+      localProgress = currentIndex / totalItems;
     }
 
-    // 4. Update State if Changed
-    if (localProgress != _chapterProgress || currentChapterIdx + 1 != _currentChapterNumber) {
+    if (localProgress != _chapterProgress) {
       setState(() {
         _chapterProgress = localProgress.clamp(0.0, 1.0);
-        _currentChapterNumber = currentChapterIdx + 1;
       });
     }
-
-    // 5. Save Last Read Position
+    
+    // ✅ SAVING HISTORY AUTOMATICALLY ON SCROLL
     _saveLastReadPosition(currentIndex);
   }
 
-  Future<void> _saveLastReadPosition(int index) async {
+  Future<void> _saveLastReadPosition(int scrollIndex) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('last_read_index_${widget.bookMeta.id}', index);
+    await prefs.setInt('last_read_chapter_${widget.bookMeta.id}', _currentChapterIndex);
+    await prefs.setInt('last_read_scroll_${widget.bookMeta.id}', scrollIndex);
   }
 
   Future<void> _loadUserHighlights() async {
@@ -183,12 +176,16 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
 
   Future<void> _addUserHighlight(int itemIndex, TextSelection selection, String colorHex) async {
     if (!selection.isValid || selection.isCollapsed) return;
+    
+    // Remove existing overlaps
     _userHighlights.removeWhere((h) =>
+        h.chapterIndex == _currentChapterIndex &&
         h.itemIndex == itemIndex &&
         h.startOffset < selection.end &&
         h.endOffset > selection.start);
 
     final newHighlight = UserHighlight(
+      chapterIndex: _currentChapterIndex,
       itemIndex: itemIndex,
       startOffset: selection.start,
       endOffset: selection.end,
@@ -200,20 +197,28 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       _currentSelection = null;
     });
 
+    // ✅ SAVE TO PERSISTENT STORAGE
     final prefs = await SharedPreferences.getInstance();
     final String jsonString = json.encode(_userHighlights.map((h) => h.toJson()).toList());
     await prefs.setString('highlights_${widget.bookMeta.id}', jsonString);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Highlight saved!"), duration: Duration(milliseconds: 800)),
+      );
+    }
   }
 
   Future<void> _clearHighlightsForItem(int itemIndex) async {
     setState(() {
-      _userHighlights.removeWhere((h) => h.itemIndex == itemIndex);
+      _userHighlights.removeWhere((h) => h.itemIndex == itemIndex && h.chapterIndex == _currentChapterIndex);
     });
     final prefs = await SharedPreferences.getInstance();
     final String jsonString = json.encode(_userHighlights.map((h) => h.toJson()).toList());
     await prefs.setString('highlights_${widget.bookMeta.id}', jsonString);
   }
 
+  // --- PARSING ---
   Map<String, dynamic> _parseHtmlContent(String rawHtml) {
     String processed = rawHtml
         .replaceAll('<br>', '\n')
@@ -250,171 +255,176 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     };
   }
 
-  Future<void> _loadAndProcessBook() async {
+  Future<void> _loadBookData() async {
     try {
       final String response = await rootBundle.loadString(widget.bookMeta.filePath);
       final Map<String, dynamic> data = json.decode(response);
       final List<dynamic> chapterList = data['chapters'];
 
-      List<BookItem> tempFlatItems = [];
       List<Chapter> tempChapters = [];
-
       for (int i = 0; i < chapterList.length; i++) {
         final c = chapterList[i];
-        String title = c['title'];
-        String rawContent = c['content'];
-
-        tempChapters.add(Chapter(number: c['chapter_number'], title: title, content: rawContent));
-
-        // Add Header
-        tempFlatItems.add(BookItem(
-          type: ItemType.header, 
-          text: title.replaceAll(RegExp(r'<[^>]*>'), ''), 
-          chapterIndex: i
+        tempChapters.add(Chapter(
+          number: c['chapter_number'] ?? i + 1, 
+          title: c['title'], 
+          content: c['content']
         ));
-
-        // Process Content
-        var parsed = _parseHtmlContent(rawContent);
-        String fullCleanText = parsed['text'];
-        List<RangeStyle> fullBoldRanges = parsed['boldRanges'];
-
-        List<String> hardParagraphs = fullCleanText.split('\n\n');
-        int currentGlobalOffset = 0;
-
-        for (String paragraph in hardParagraphs) {
-          if (paragraph.trim().isEmpty) {
-            currentGlobalOffset += paragraph.length + 2; 
-            continue;
-          }
-
-          int paraStart = currentGlobalOffset;
-          int paraEnd = paraStart + paragraph.length;
-
-          List<int> splitPoints = [];
-          for (var r in fullBoldRanges) {
-            if (r.start > paraStart && r.start < paraEnd) {
-              splitPoints.add(r.start - paraStart);
-            }
-          }
-          splitPoints.sort();
-
-          List<String> boldSplitChunks = [];
-          int previousSplit = 0;
-          for (int point in splitPoints) {
-            boldSplitChunks.add(paragraph.substring(previousSplit, point).trim());
-            previousSplit = point;
-          }
-          boldSplitChunks.add(paragraph.substring(previousSplit).trim());
-
-          List<String> finalSubChunks = [];
-          for (String chunk in boldSplitChunks) {
-            if (chunk.isEmpty) continue;
-
-            RegExp sentenceSplit = RegExp(r'(?<=[.?!])\s+');
-            List<String> sentences = chunk.split(sentenceSplit);
-            
-            if (sentences.length <= 8) {
-              finalSubChunks.add(chunk);
-            } else {
-              StringBuffer buffer = StringBuffer();
-              int sentenceCount = 0;
-              for (String s in sentences) {
-                 buffer.write(s.trim());
-                 buffer.write(" "); 
-                 sentenceCount++;
-                 
-                 if (sentenceCount >= 8 || buffer.length > 800) {
-                   finalSubChunks.add(buffer.toString().trim());
-                   buffer.clear();
-                   sentenceCount = 0;
-                 }
-              }
-              if (buffer.isNotEmpty) {
-                finalSubChunks.add(buffer.toString().trim());
-              }
-            }
-          }
-
-          for (String chunkText in finalSubChunks) {
-            int chunkStart = currentGlobalOffset;
-            int chunkEnd = chunkStart + chunkText.length;
-            
-            List<RangeStyle> chunkBoldRanges = [];
-            for (var r in fullBoldRanges) {
-              if (r.start < chunkEnd && r.end > chunkStart) {
-                int relativeStart = (r.start > chunkStart ? r.start : chunkStart) - chunkStart;
-                int relativeEnd = (r.end < chunkEnd ? r.end : chunkEnd) - chunkStart;
-                chunkBoldRanges.add(RangeStyle(start: relativeStart, end: relativeEnd, isBold: true));
-              }
-            }
-
-            tempFlatItems.add(BookItem(
-              type: ItemType.content,
-              text: chunkText.trim(),
-              chapterIndex: i,
-              boldRanges: chunkBoldRanges,
-            ));
-            
-            int nextSearch = fullCleanText.indexOf(chunkText, currentGlobalOffset);
-            if (nextSearch != -1) {
-              currentGlobalOffset = nextSearch + chunkText.length;
-              if (currentGlobalOffset < fullCleanText.length) currentGlobalOffset++; 
-            } else {
-              currentGlobalOffset += chunkText.length + 1;
-            }
-          }
-        }
       }
 
-      if (mounted) {
-        setState(() {
-          _rawChapters = tempChapters;
-          _flatItems = tempFlatItems;
-          _isLoading = false;
+      _allChapters = tempChapters;
+
+      if (widget.initialChapterIndex == 0 && widget.initialIndex == 0) {
+        final prefs = await SharedPreferences.getInstance();
+        _currentChapterIndex = prefs.getInt('last_read_chapter_${widget.bookMeta.id}') ?? 0;
+      }
+
+      await _loadChapterIntoView(_currentChapterIndex, resetScroll: widget.initialIndex == 0);
+
+      if (widget.initialIndex > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToIndex(widget.initialIndex);
         });
-        
-        _handleInitialNavigation();
       }
+
     } catch (e) {
-      debugPrint("Error processing book: $e");
+      debugPrint("Error loading book: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _handleInitialNavigation() async {
-    int targetIndex = -1;
+  Future<void> _loadChapterIntoView(int chapterIndex, {bool resetScroll = true}) async {
+    setState(() => _isLoading = true);
 
-    if (widget.initialIndex != -1) {
-      targetIndex = widget.initialIndex;
-    } 
-    else if (widget.initialChapterIndex != -1) {
-      targetIndex = _flatItems.indexWhere((item) => 
-        item.chapterIndex == widget.initialChapterIndex && item.type == ItemType.header
-      );
-    } 
-    else {
-      final prefs = await SharedPreferences.getInstance();
-      targetIndex = prefs.getInt('last_read_index_${widget.bookMeta.id}') ?? 0;
+    if (chapterIndex < 0 || chapterIndex >= _allChapters.length) {
+      setState(() => _isLoading = false);
+      return;
     }
 
-    if (targetIndex >= 0 && targetIndex < _flatItems.length) {
-      _scrollToIndex(targetIndex);
+    await Future.delayed(const Duration(milliseconds: 50)); 
+
+    final Chapter c = _allChapters[chapterIndex];
+    List<BookItem> tempItems = [];
+
+    // Header
+    tempItems.add(BookItem(
+      type: ItemType.header, 
+      text: c.title.replaceAll(RegExp(r'<[^>]*>'), ''), 
+      chapterIndex: chapterIndex
+    ));
+
+    // Content Parsing
+    var parsed = _parseHtmlContent(c.content);
+    String fullCleanText = parsed['text'];
+    List<RangeStyle> fullBoldRanges = parsed['boldRanges'];
+
+    List<String> hardParagraphs = fullCleanText.split('\n\n');
+    int currentGlobalOffset = 0;
+
+    for (String paragraph in hardParagraphs) {
+      if (paragraph.trim().isEmpty) {
+        currentGlobalOffset += paragraph.length + 2; 
+        continue;
+      }
+
+      int paraStart = currentGlobalOffset;
+      int paraEnd = paraStart + paragraph.length;
+
+      List<int> splitPoints = [];
+      for (var r in fullBoldRanges) {
+        if (r.start > paraStart && r.start < paraEnd) {
+          splitPoints.add(r.start - paraStart);
+        }
+      }
+      splitPoints.sort();
+
+      List<String> boldSplitChunks = [];
+      int previousSplit = 0;
+      for (int point in splitPoints) {
+        boldSplitChunks.add(paragraph.substring(previousSplit, point).trim());
+        previousSplit = point;
+      }
+      boldSplitChunks.add(paragraph.substring(previousSplit).trim());
+
+      for (String chunk in boldSplitChunks) {
+        if (chunk.isEmpty) continue;
+
+        RegExp sentenceSplit = RegExp(r'(?<=[.?!])\s+');
+        List<String> sentences = chunk.split(sentenceSplit);
+        
+        if (sentences.length <= 8) {
+          _addContentItem(tempItems, chunk, chapterIndex, fullBoldRanges, currentGlobalOffset);
+        } else {
+          StringBuffer buffer = StringBuffer();
+          int sentenceCount = 0;
+          for (String s in sentences) {
+             buffer.write(s.trim());
+             buffer.write(" "); 
+             sentenceCount++;
+             
+             if (sentenceCount >= 8 || buffer.length > 800) {
+               _addContentItem(tempItems, buffer.toString().trim(), chapterIndex, fullBoldRanges, currentGlobalOffset);
+               buffer.clear();
+               sentenceCount = 0;
+             }
+          }
+          if (buffer.isNotEmpty) {
+            _addContentItem(tempItems, buffer.toString().trim(), chapterIndex, fullBoldRanges, currentGlobalOffset);
+          }
+        }
+      }
+      currentGlobalOffset += paragraph.length + 2;
+    }
+
+    // Navigation Item
+    tempItems.add(BookItem(
+      type: ItemType.navigation,
+      text: "",
+      chapterIndex: chapterIndex
+    ));
+
+    if (mounted) {
+      setState(() {
+        _currentViewItems = tempItems;
+        _currentChapterIndex = chapterIndex;
+        _isLoading = false;
+        _chapterProgress = 0.0;
+      });
+
+      if (resetScroll) {
+        if (_itemScrollController.isAttached) _itemScrollController.jumpTo(index: 0);
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        int savedScroll = prefs.getInt('last_read_scroll_${widget.bookMeta.id}') ?? 0;
+        if (_itemScrollController.isAttached) _itemScrollController.jumpTo(index: savedScroll);
+      }
+    }
+  }
+
+  void _addContentItem(List<BookItem> items, String text, int chapterIndex, List<RangeStyle> fullBoldRanges, int globalOffset) {
+    if (text.isEmpty) return;
+    List<RangeStyle> chunkBoldRanges = [];
+    items.add(BookItem(
+      type: ItemType.content,
+      text: text,
+      chapterIndex: chapterIndex,
+      boldRanges: chunkBoldRanges, 
+    ));
+  }
+
+  void _navigateToChapter(int index) {
+    if (index >= 0 && index < _allChapters.length) {
+      _loadChapterIntoView(index);
     }
   }
 
   void _scrollToIndex(int index) {
-    const double alignment = 0.0; 
-
     if (_itemScrollController.isAttached) {
-      _itemScrollController.jumpTo(index: index, alignment: alignment);
+      _itemScrollController.jumpTo(index: index);
     } else {
       Timer.periodic(const Duration(milliseconds: 50), (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
+        if (!mounted) { timer.cancel(); return; }
         if (_itemScrollController.isAttached) {
-          _itemScrollController.jumpTo(index: index, alignment: alignment);
+          _itemScrollController.jumpTo(index: index);
           timer.cancel();
         } else if (timer.tick > 20) {
           timer.cancel();
@@ -423,18 +433,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     }
   }
 
-  void _jumpToChapter(int chapterIndex) {
-    if (Navigator.canPop(context)) Navigator.pop(context);
-
-    int index = _flatItems.indexWhere((item) => 
-      item.chapterIndex == chapterIndex && item.type == ItemType.header
-    );
-
-    if (index != -1) {
-      _scrollToIndex(index);
-    }
-  }
-
+  // --- RENDERING TEXT ---
   List<TextSpan> _buildComplexText(BuildContext context, int itemIndex, BookItem item, String? query) {
     final String text = item.text;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -445,8 +444,8 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         : (Theme.of(context).textTheme.bodyMedium?.color ?? Colors.black87);
 
     final TextStyle baseStyle = isHeader
-        ? const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, fontFamily: 'Georgia', height: 1.3)
-        : const TextStyle(fontSize: 18, height: 1.8, fontFamily: 'Georgia');
+        ? TextStyle(fontSize: _fontSize + 6, fontWeight: FontWeight.bold, fontFamily: 'Georgia', height: 1.3)
+        : TextStyle(fontSize: _fontSize, height: 1.8, fontFamily: 'Georgia');
 
     List<Map<String, dynamic>> charStyles = List.generate(text.length, (index) => {
       'isBold': false,
@@ -459,7 +458,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       }
     }
 
-    final myHighlights = _userHighlights.where((h) => h.itemIndex == itemIndex);
+    final myHighlights = _userHighlights.where((h) => h.chapterIndex == _currentChapterIndex && h.itemIndex == itemIndex);
     for (var h in myHighlights) {
       int safeStart = h.startOffset.clamp(0, text.length);
       int safeEnd = h.endOffset.clamp(0, text.length);
@@ -513,6 +512,52 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     return spans;
   }
 
+  // --- UX: FONT SIZE SETTINGS ---
+  void _showDisplaySettings() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        // ✅ StatefulBuilder ensures slider updates visibly
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(20),
+              height: 180,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Display Settings", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      const Icon(Icons.text_fields, size: 20),
+                      const SizedBox(width: 15),
+                      Expanded(
+                        child: Slider(
+                          value: _fontSize,
+                          min: 12.0,
+                          max: 30.0,
+                          divisions: 9,
+                          label: _fontSize.round().toString(),
+                          onChanged: (val) {
+                            setModalState(() => _fontSize = val); // Updates Slider
+                            setState(() => _fontSize = val);      // Updates Text
+                          }, 
+                        ),
+                      ),
+                      const Icon(Icons.text_fields, size: 30),
+                    ],
+                  ),
+                  const Center(child: Text("Drag to adjust text size", style: TextStyle(color: Colors.grey))),
+                ],
+              ),
+            );
+          }
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -526,19 +571,14 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () {
-               if (_flatItems.isNotEmpty) {
-                showSearch(
-                  context: context,
-                  delegate: GlobalBookSearchDelegate(flatItems: _flatItems, bookMeta: widget.bookMeta),
-                );
-              }
-            },
+            icon: const Icon(Icons.format_size), 
+            tooltip: "Text Size",
+            onPressed: _showDisplaySettings,
           ),
           Builder(
             builder: (context) => IconButton(
-              icon: const Icon(Icons.menu_book),
+              icon: const Icon(Icons.list),
+              tooltip: "Chapters",
               onPressed: () => Scaffold.of(context).openEndDrawer(),
             ),
           ),
@@ -553,10 +593,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                 image: DecorationImage(
                   image: AssetImage(widget.bookMeta.coverImage),
                   fit: BoxFit.cover,
-                  colorFilter: ColorFilter.mode(
-                    Colors.black.withOpacity(0.6),
-                    BlendMode.darken,
-                  ),
+                  colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.6), BlendMode.darken),
                 ),
               ),
               child: Center(
@@ -569,11 +606,26 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
             ),
             Expanded(
               child: ListView.builder(
-                itemCount: _rawChapters.length,
+                itemCount: _allChapters.length,
                 itemBuilder: (context, index) {
-                  return ListTile(
-                    title: Text(_rawChapters[index].title, maxLines: 1),
-                    onTap: () => _jumpToChapter(index),
+                  bool isActive = index == _currentChapterIndex;
+                  return Container(
+                    color: isActive ? colorScheme.primary.withOpacity(0.1) : null,
+                    child: ListTile(
+                      leading: isActive ? Icon(Icons.bookmark, color: colorScheme.primary) : null,
+                      title: Text(
+                        _allChapters[index].title,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                          color: isActive ? colorScheme.primary : null,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context); 
+                        if (!isActive) _navigateToChapter(index);
+                      },
+                    ),
                   );
                 },
               ),
@@ -585,14 +637,46 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Stack(
               children: [
-                // 1. The Main Content List
                 ScrollablePositionedList.builder(
                   itemScrollController: _itemScrollController,
                   itemPositionsListener: _itemPositionsListener,
-                  itemCount: _flatItems.length,
+                  itemCount: _currentViewItems.length,
                   itemBuilder: (context, index) {
-                    final item = _flatItems[index];
+                    final item = _currentViewItems[index];
 
+                    // --- NAVIGATION BUTTONS ---
+                    if (item.type == ItemType.navigation) {
+                      return Padding(
+                        padding: const EdgeInsets.all(25.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            if (_currentChapterIndex > 0)
+                              OutlinedButton.icon(
+                                onPressed: () => _navigateToChapter(_currentChapterIndex - 1),
+                                icon: const Icon(Icons.arrow_back),
+                                label: const Text("Previous"),
+                              )
+                            else
+                              const SizedBox(width: 10),
+                            
+                            if (_currentChapterIndex < _allChapters.length - 1)
+                              ElevatedButton.icon(
+                                onPressed: () => _navigateToChapter(_currentChapterIndex + 1),
+                                icon: const Icon(Icons.arrow_forward),
+                                label: const Text("Next Chapter"),
+                                style: ElevatedButton.styleFrom(
+                                  // ✅ BRAND BLUE FOR LIGHT MODE, THEME COLOR FOR DARK
+                                  backgroundColor: isDark ? colorScheme.primary : const Color(0xFF06275C),
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    // --- CONTENT ---
                     return Padding(
                       padding: item.type == ItemType.header
                           ? const EdgeInsets.fromLTRB(20, 40, 20, 20)
@@ -606,21 +690,30 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                           _currentSelection = selection;
                           _focusedItemIndex = index;
                         },
+                        // ✅ CONTEXT MENU WITH COPY & MULTI-COLOR
                         contextMenuBuilder: (context, editableTextState) {
                           return AdaptiveTextSelectionToolbar(
                             anchors: editableTextState.contextMenuAnchors,
                             children: [
+                              // 1. Copy Button
                               TextSelectionToolbarTextButton(
                                 padding: const EdgeInsets.all(12.0),
                                 onPressed: () {
                                   editableTextState.copySelection(SelectionChangedCause.toolbar);
+                                  // Optional: Hide toolbar after copy
+                                  editableTextState.hideToolbar();
                                 },
                                 child: const Icon(Icons.copy, size: 20),
                               ),
-                              _buildColorButton(index, "0xFF81C784", Colors.green, editableTextState), 
-                              _buildColorButton(index, "0xFFFFF59D", Colors.yellow, editableTextState), 
-                              _buildColorButton(index, "0xFF64B5F6", Colors.blue, editableTextState), 
-                              _buildColorButton(index, "0xFFF06292", Colors.pink, editableTextState), 
+                              
+                              // 2. Color Options
+                              _buildColorButton(index, "0xFF81C784", Colors.green.shade300, editableTextState), // Green
+                              _buildColorButton(index, "0xFFFFF59D", Colors.yellow.shade200, editableTextState), // Yellow
+                              _buildColorButton(index, "0xFFFFB74D", Colors.orange.shade300, editableTextState), // Orange
+                              _buildColorButton(index, "0xFFF06292", Colors.pink.shade300, editableTextState),   // Pink
+                              _buildColorButton(index, "0xFF64B5F6", Colors.blue.shade300, editableTextState),   // Royal Blue
+
+                              // 3. Clear Button
                               TextSelectionToolbarTextButton(
                                 padding: const EdgeInsets.all(12.0),
                                 onPressed: () {
@@ -637,51 +730,25 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                   },
                 ),
 
-                // 2. ✅ Vertical Scroll Progress Bar (Right Side)
+                // --- PROGRESS BAR ---
                 Positioned(
-                  right: 2, // Stick to the right edge
+                  right: 0,
                   top: 0,
                   bottom: 0,
                   child: Container(
-                    width: 6, // Thickness of the bar
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.grey[800] : Colors.grey[300], // Track color
-                      borderRadius: BorderRadius.circular(3),
-                    ),
+                    width: 4,
+                    color: Colors.transparent,
                     child: Align(
-                      alignment: Alignment.topCenter, // Fill from top
+                      alignment: Alignment.topCenter,
                       child: FractionallySizedBox(
-                        heightFactor: _chapterProgress == 0 ? 0.01 : _chapterProgress, // The progress height
+                        heightFactor: _chapterProgress == 0 ? 0.01 : _chapterProgress,
                         widthFactor: 1.0,
                         child: Container(
                           decoration: BoxDecoration(
-                            // Active progress color
-                            color: colorScheme.primary, 
-                            borderRadius: BorderRadius.circular(3),
+                            color: colorScheme.primary.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 3. ✅ Optional Chapter Indicator (Fades out while reading)
-                Positioned(
-                  top: 10,
-                  right: 15,
-                  child: AnimatedOpacity(
-                    opacity: _chapterProgress > 0.05 ? 0.0 : 1.0, // Hide when reading starts
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        "Chapter $_currentChapterNumber",
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
                       ),
                     ),
                   ),
@@ -700,75 +767,18 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         }
       },
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8),
-        width: 24,
-        height: 24,
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        width: 32, 
+        height: 32,
         decoration: BoxDecoration(
           color: color,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.grey.shade300, width: 1),
+          border: Border.all(color: Colors.grey.shade400, width: 1),
+          boxShadow: [
+             BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 2, offset: const Offset(0, 1))
+          ]
         ),
       ),
-    );
-  }
-}
-
-class GlobalBookSearchDelegate extends SearchDelegate {
-  final List<BookItem> flatItems;
-  final BookMeta bookMeta;
-
-  GlobalBookSearchDelegate({required this.flatItems, required this.bookMeta});
-
-  @override
-  List<Widget>? buildActions(BuildContext context) => [
-    IconButton(icon: const Icon(Icons.clear), onPressed: () => query = ''),
-  ];
-
-  @override
-  Widget? buildLeading(BuildContext context) => IconButton(
-    icon: const Icon(Icons.arrow_back),
-    onPressed: () => close(context, null),
-  );
-
-  @override
-  Widget buildResults(BuildContext context) => _buildSearchList(context);
-
-  @override
-  Widget buildSuggestions(BuildContext context) => _buildSearchList(context);
-
-  Widget _buildSearchList(BuildContext context) {
-    if (query.isEmpty) return const Center(child: Text("Search inside this book..."));
-    final results = flatItems.where((item) {
-      return item.text.toLowerCase().contains(query.toLowerCase());
-    }).toList();
-
-    return ListView.builder(
-      itemCount: results.length,
-      itemBuilder: (context, index) {
-        final item = results[index];
-        return ListTile(
-          title: Text(
-            item.text, 
-            maxLines: 2, 
-            overflow: TextOverflow.ellipsis
-          ),
-          subtitle: Text("Chapter ${item.chapterIndex + 1}"),
-          onTap: () {
-            // PASS THE EXACT ITEM INDEX
-            int originalIndex = flatItems.indexOf(item);
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => EGWBookDetailScreen(
-                  bookMeta: bookMeta,
-                  initialIndex: originalIndex,
-                  searchQuery: query,
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 }

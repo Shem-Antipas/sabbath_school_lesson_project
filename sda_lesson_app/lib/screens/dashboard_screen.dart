@@ -22,6 +22,7 @@ import 'profile_screen.dart';
 import 'devotionals_library_screen.dart';
 import 'donate_screen.dart'; // ✅ NEW: Import Donate Screen
 import 'reader_screen.dart'; // ✅ NEW: Import Reader Screen (Ensure filename matches)
+import 'alive_in_jesus_screen.dart'; // ✅ Add this import
 
 // --- WIDGETS ---
 import 'package:sda_lesson_app/widgets/simple_error_view.dart';
@@ -468,6 +469,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   const _SectionLabel(label: "More Resources"),
                   const SizedBox(height: 12),
                   _buildHymnalTile(context),
+                  
+                  const SizedBox(height: 16),
+                  _buildAliveInJesusTile(context),
 
                   // ✅ NEW: DONATE CARD SECTION
                   const SizedBox(height: 24),
@@ -817,6 +821,58 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
             Spacer(),
             Icon(Icons.play_circle_outline, color: Colors.white70),
+          ],
+        ),
+      ),
+    );
+  }
+  Widget _buildAliveInJesusTile(BuildContext context) {
+    return InkWell(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (c) => const AliveInJesusScreen()),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          // Using a Teal color to distinguish it as the "New Curriculum"
+          color: const Color.fromARGB(255, 1, 14, 76), 
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: const Color.fromARGB(255, 0, 27, 72).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.auto_stories, color: Colors.white, size: 28),
+            SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Alive in Jesus",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    "New Curriculum (Babies - Primary)",
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 16),
           ],
         ),
       ),

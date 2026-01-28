@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Required for SystemUiOverlayStyle
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,7 +11,7 @@ class DevotionalHighlight {
   final String bookId;
   final int month;
   final int day;
-  final int paragraphIndex; // Which paragraph in the reflowed text?
+  final int paragraphIndex;
   final int startOffset;
   final int endOffset;
   final String colorHex;
@@ -77,9 +78,10 @@ class _DevotionalReaderScreenState
 
   late int _currentDay;
   bool _isInit = true;
-  
-  // ✅ NEW: Progress State
   double _readingProgress = 0.0;
+  
+  // ✅ 1. FONT SIZE STATE
+  double _fontSize = 18.0;
 
   // Search Scrolling
   final GlobalKey _highlightKey = GlobalKey();
@@ -176,6 +178,66 @@ class _DevotionalReaderScreenState
     await prefs.setString('highlights_${widget.bookId}', jsonString);
   }
 
+  // --- ✅ 2. DISPLAY SETTINGS MODAL (With Moving Slider) ---
+  void _showDisplaySettings() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        // StatefulBuilder allows the slider to update its own state inside the modal
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(24),
+              height: 200,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Display Settings", 
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+                  ),
+                  const SizedBox(height: 30),
+                  Row(
+                    children: [
+                      const Icon(Icons.text_fields, size: 16),
+                      Expanded(
+                        child: Slider(
+                          value: _fontSize,
+                          min: 14.0,
+                          max: 32.0,
+                          divisions: 9,
+                          label: _fontSize.round().toString(),
+                          onChanged: (val) {
+                            // 1. Update the slider position immediately
+                            setModalState(() => _fontSize = val);
+                            // 2. Update the main screen text size
+                            setState(() => _fontSize = val);
+                          },
+                        ),
+                      ),
+                      const Icon(Icons.text_fields, size: 28),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Center(
+                    child: Text(
+                      "Font Size: ${_fontSize.toInt()}",
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   // --- UI BUILDING ---
 
   @override
@@ -186,20 +248,34 @@ class _DevotionalReaderScreenState
     final colorScheme = Theme.of(context).colorScheme;
     final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
     final textColor = isDark ? Colors.grey[200] : Colors.grey[900];
-    final verseColor = isDark ? Colors.grey[400] : Colors.grey[700];
+    final verseColor = isDark ? Colors.grey[400] : Colors.grey[800];
 
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        title: Text(
-          "${widget.monthName} $_currentDay",
-          style: TextStyle(color: isDark ? Colors.white : Colors.black),
+        title: Column(
+          children: [
+            Text(
+              widget.monthName.toUpperCase(),
+              style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: isDark ? Colors.grey : Colors.grey[700]),
+            ),
+            Text(
+              "Day $_currentDay",
+              style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
+            ),
+          ],
         ),
         backgroundColor: bgColor,
         elevation: 0,
         centerTitle: true,
         iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black),
         actions: [
+          // ✅ 3. FONT SIZE ICON
+          IconButton(
+            icon: const Icon(Icons.format_size),
+            tooltip: "Adjust Text Size",
+            onPressed: _showDisplaySettings,
+          ),
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () {
@@ -239,7 +315,7 @@ class _DevotionalReaderScreenState
             _isInit = false;
           }
 
-          // ✅ UPDATED: Stack to overlay Progress Bar
+          // ✅ STACK FOR PROGRESS BAR OVERLAY
           return Stack(
             children: [
               PageView.builder(
@@ -251,7 +327,7 @@ class _DevotionalReaderScreenState
                     setState(() {
                       _currentDay = newDay;
                       _currentSelection = null;
-                      _readingProgress = 0.0; // Reset progress on page flip
+                      _readingProgress = 0.0;
                     });
                     _saveReadingProgress(_currentDay);
                   }
@@ -260,19 +336,16 @@ class _DevotionalReaderScreenState
                   final reading = monthReadings[index];
                   final List<String> cleanParagraphs = _reflowText(reading.content);
 
-                  // ✅ ADDED: NotificationListener to capture scroll events
+                  // ✅ SCROLL LISTENER
                   return NotificationListener<ScrollNotification>(
                     onNotification: (ScrollNotification notification) {
-                      // Only listen to vertical scroll of the content
                       if (notification.metrics.axis == Axis.vertical) {
                          final metrics = notification.metrics;
                          final progress = metrics.maxScrollExtent == 0
                              ? 1.0
                              : metrics.pixels / metrics.maxScrollExtent;
                          
-                         // Update state if changed significantly (optimization)
                          if ((progress - _readingProgress).abs() > 0.01) {
-                           // Use Future.microtask to avoid setState during build
                            Future.microtask(() {
                              if (mounted) {
                                setState(() {
@@ -291,64 +364,74 @@ class _DevotionalReaderScreenState
                       ),
                       child: Column(
                         children: [
-                          // TITLE
+                          // --- TITLE ---
                           SelectableText(
-                            reading.title.toUpperCase(),
+                            reading.title,
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
+                              fontSize: _fontSize + 6, // Scales with slider
+                              fontWeight: FontWeight.bold,
                               color: isDark
                                   ? Colors.tealAccent
                                   : const Color(0xFF7D2D3B),
-                              fontFamily: 'Serif',
-                              letterSpacing: 1.1,
+                              fontFamily: 'Georgia',
+                              height: 1.3,
                             ),
                           ),
                           const SizedBox(height: 24),
 
-                          // VERSE BOX
+                          // --- VERSE BOX ---
                           if (reading.verse.isNotEmpty)
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 30),
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? Colors.grey[850]
-                                    : const Color(0xFFF5F5F5),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border(
-                                  left: BorderSide(color: Colors.teal, width: 4),
+                            Stack(
+                              children: [
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 30),
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 25),
+                                  decoration: BoxDecoration(
+                                    color: isDark ? Colors.grey[850] : const Color(0xFFF9F9F9),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isDark ? Colors.teal.withOpacity(0.3) : Colors.grey.shade300
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
+                                    ]
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      SelectableText(
+                                        reading.verse,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontStyle: FontStyle.italic,
+                                          fontSize: _fontSize, // Scales
+                                          color: verseColor,
+                                          height: 1.6,
+                                          fontFamily: 'Georgia',
+                                        ),
+                                      ),
+                                      const SizedBox(height: 15),
+                                      Text(
+                                        "- ${reading.verseRef}",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: _fontSize - 2, // Scales
+                                          color: isDark
+                                              ? Colors.teal[200]
+                                              : Colors.teal[800],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              child: Column(
-                                children: [
-                                  SelectableText(
-                                    reading.verse,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontStyle: FontStyle.italic,
-                                      fontSize: 16,
-                                      color: verseColor,
-                                      height: 1.5,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    "- ${reading.verseRef}",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                      color: isDark
-                                          ? Colors.teal[200]
-                                          : Colors.teal[800],
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                Positioned(
+                                  top: 10, left: 10,
+                                  child: Icon(Icons.format_quote, color: Colors.grey.withOpacity(0.2), size: 40),
+                                ),
+                              ],
                             ),
 
-                          // PARAGRAPHS
+                          // --- PARAGRAPHS ---
                           ...List.generate(cleanParagraphs.length, (paraIndex) {
                             final paraText = cleanParagraphs[paraIndex];
 
@@ -373,7 +456,7 @@ class _DevotionalReaderScreenState
                             }
 
                             return Padding(
-                              padding: const EdgeInsets.only(bottom: 16.0),
+                              padding: const EdgeInsets.only(bottom: 18.0),
                               child: Container(
                                 key: containsSearch ? _highlightKey : null,
                                 child: SelectableText.rich(
@@ -388,10 +471,10 @@ class _DevotionalReaderScreenState
                                   ),
                                   textAlign: TextAlign.justify,
                                   style: TextStyle(
-                                    fontSize: 18,
+                                    fontSize: _fontSize, // ✅ DYNAMIC FONT SIZE
                                     height: 1.8,
                                     color: textColor,
-                                    fontFamily: 'Serif',
+                                    fontFamily: 'Georgia',
                                   ),
                                   onSelectionChanged: (selection, cause) {
                                     _currentSelection = selection;
@@ -410,41 +493,17 @@ class _DevotionalReaderScreenState
                                           },
                                           child: const Icon(Icons.copy, size: 20),
                                         ),
-                                        _buildColorButton(
-                                          paraIndex,
-                                          "0xFF81C784",
-                                          Colors.green,
-                                          editableTextState,
-                                        ),
-                                        _buildColorButton(
-                                          paraIndex,
-                                          "0xFFFFF59D",
-                                          Colors.yellow,
-                                          editableTextState,
-                                        ),
-                                        _buildColorButton(
-                                          paraIndex,
-                                          "0xFF64B5F6",
-                                          Colors.blue,
-                                          editableTextState,
-                                        ),
-                                        _buildColorButton(
-                                          paraIndex,
-                                          "0xFFF06292",
-                                          Colors.pink,
-                                          editableTextState,
-                                        ),
+                                        _buildColorButton(paraIndex, "0xFF81C784", Colors.green, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFFFFF59D", Colors.yellow, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFF64B5F6", Colors.blue, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFFF06292", Colors.pink, editableTextState),
                                         TextSelectionToolbarTextButton(
                                           padding: const EdgeInsets.all(12.0),
                                           onPressed: () {
                                             _clearHighlightsForParagraph(paraIndex);
                                             editableTextState.hideToolbar();
                                           },
-                                          child: const Icon(
-                                            Icons.format_clear,
-                                            size: 20,
-                                            color: Colors.red,
-                                          ),
+                                          child: const Icon(Icons.format_clear, size: 20, color: Colors.red),
                                         ),
                                       ],
                                     );
@@ -453,6 +512,14 @@ class _DevotionalReaderScreenState
                               ),
                             );
                           }),
+                          
+                          const SizedBox(height: 20),
+                          Divider(color: Colors.grey.withOpacity(0.3)),
+                          const SizedBox(height: 20),
+
+                          // ✅ 4. BOTTOM NAVIGATION
+                          _buildBottomNavigation(context, index, monthReadings.length),
+
                           const SizedBox(height: 50),
                         ],
                       ),
@@ -461,27 +528,24 @@ class _DevotionalReaderScreenState
                 },
               ),
 
-              // ✅ ADDED: Vertical Scroll Progress Bar (Right Side)
+              // ✅ VERTICAL PROGRESS BAR
               Positioned(
-                right: 2, // Stick to right edge
-                top: 0,
-                bottom: 0,
+                right: 2, top: 0, bottom: 0,
                 child: Container(
-                  width: 6, // Thickness
+                  width: 6,
                   margin: const EdgeInsets.symmetric(vertical: 4),
                   decoration: BoxDecoration(
-                    color: isDark ? Colors.grey[800] : Colors.grey[300], // Track color
+                    color: isDark ? Colors.grey[800] : Colors.grey[300], 
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: FractionallySizedBox(
-                      // Ensure minimal height so it's visible even at 0%
                       heightFactor: _readingProgress == 0 ? 0.02 : _readingProgress, 
                       widthFactor: 1.0,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: colorScheme.primary, // Active fill color
+                          color: colorScheme.primary, 
                           borderRadius: BorderRadius.circular(3),
                         ),
                       ),
@@ -496,7 +560,48 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // --- HELPER WIDGETS ---
+  // --- WIDGET HELPERS ---
+
+  Widget _buildBottomNavigation(BuildContext context, int index, int totalLength) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        if (index > 0)
+          OutlinedButton.icon(
+            onPressed: () {
+              _pageController?.previousPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+            icon: const Icon(Icons.arrow_back_ios, size: 16),
+            label: const Text("Previous"),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            ),
+          )
+        else
+          const SizedBox(width: 10),
+
+        if (index < totalLength - 1)
+          ElevatedButton.icon(
+            onPressed: () {
+              _pageController?.nextPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+            icon: const Text("Next"), 
+            label: const Icon(Icons.arrow_forward_ios, size: 16),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _buildColorButton(
     int index,
@@ -524,7 +629,7 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // --- TEXT PROCESSING ---
+  // --- TEXT PROCESSING HELPERS ---
 
   List<TextSpan> _buildRichText(
     String text,
@@ -649,7 +754,7 @@ class _DevotionalReaderScreenState
     return finalParagraphs;
   }
 
-  void _shareContent(DevotionalDay reading, String bookTitle) {
+  void _shareContent(dynamic reading, String bookTitle) { // Updated type to dynamic to handle provider model
     List<String> cleanParas = _reflowText(reading.content);
     String formattedContent = cleanParas.join("\n\n");
     final String textToShare =
