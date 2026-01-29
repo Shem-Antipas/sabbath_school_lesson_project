@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_tts/flutter_tts.dart'; // ✅ NEW IMPORT
+import 'package:flutter_tts/flutter_tts.dart';
 import '../providers/devotional_provider.dart';
 
 // --- MODEL FOR HIGHLIGHTS (Unchanged) ---
@@ -80,14 +80,14 @@ class _DevotionalReaderScreenState
   late int _currentDay;
   bool _isInit = true;
   double _readingProgress = 0.0;
-  
+
   double _fontSize = 18.0;
 
   final GlobalKey _highlightKey = GlobalKey();
 
   List<DevotionalHighlight> _userHighlights = [];
   TextSelection? _currentSelection;
-  int? _focusedParagraphIndex; 
+  int? _focusedParagraphIndex;
 
   // ✅ AUDIO PLAYER VARIABLES
   final FlutterTts flutterTts = FlutterTts();
@@ -95,6 +95,12 @@ class _DevotionalReaderScreenState
   bool _isPaused = false;
   double _speechRate = 0.5;
   bool _showAudioPlayer = false;
+
+  // ✅ AUDIO PROGRESS TRACKING
+  String _cachedAudioText = "";
+  int _currentWordStart = 0;
+  int _currentWordEnd = 0;
+  int _totalTextLength = 1;
 
   @override
   void initState() {
@@ -117,84 +123,181 @@ class _DevotionalReaderScreenState
     await flutterTts.setPitch(1.0);
     await flutterTts.setSpeechRate(_speechRate);
 
+    // iOS Audio Config
+    await flutterTts
+        .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+        ], IosTextToSpeechAudioMode.defaultMode);
+
     flutterTts.setStartHandler(() {
-      setState(() {
-        _isSpeaking = true;
-        _isPaused = false;
-      });
+      if (mounted)
+        setState(() {
+          _isSpeaking = true;
+          _isPaused = false;
+        });
     });
 
     flutterTts.setCompletionHandler(() {
-      setState(() {
-        _isSpeaking = false;
-        _isPaused = false;
-      });
+      if (mounted)
+        setState(() {
+          _isSpeaking = false;
+          _isPaused = false;
+          _currentWordStart = 0;
+        });
     });
 
     flutterTts.setErrorHandler((msg) {
-      setState(() {
-        _isSpeaking = false;
-        _isPaused = false;
-      });
+      if (mounted)
+        setState(() {
+          _isSpeaking = false;
+          _isPaused = false;
+        });
+    });
+
+    // ✅ PROGRESS LISTENER
+    flutterTts.setProgressHandler((
+      String text,
+      int start,
+      int end,
+      String word,
+    ) {
+      if (mounted) {
+        setState(() {
+          _currentWordStart = start;
+          _currentWordEnd = end;
+        });
+      }
     });
   }
 
-  // ✅ AUDIO LOGIC
-  Future<void> _speak() async {
-    // 1. Get current data
+  // ✅ 1. PREPARE AUDIO (Headphone Click)
+  void _prepareAudioPanel() {
+    if (_showAudioPlayer) {
+      // If playing, we can toggle visibility or just return
+      setState(() => _showAudioPlayer = false);
+      return;
+    }
+
     final asyncData = ref.read(devotionalContentProvider(widget.bookId));
     if (asyncData.value == null) return;
 
     final allReadings = asyncData.value!;
-    final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
-    
-    // Find current day's reading
+    final monthReadings = allReadings
+        .where((r) => r.month == widget.monthIndex)
+        .toList();
     final reading = monthReadings.firstWhere(
       (r) => r.day == _currentDay,
       orElse: () => monthReadings.first,
     );
 
-    // 2. Prepare Text
     List<String> cleanParas = _reflowText(reading.content);
-    String bodyText = cleanParas.join(". "); // Join paragraphs with pause
-    
-    String fullText = "${reading.title}. ${reading.verse}. ${reading.verseRef}. $bodyText";
+    String bodyText = cleanParas.join(". ");
+    String fullText =
+        "${reading.title}. ${reading.verse}. ${reading.verseRef}. $bodyText";
 
     setState(() {
-      _isSpeaking = true;
-      _isPaused = false;
+      _cachedAudioText = fullText;
+      _totalTextLength = fullText.length;
+      _currentWordStart = 0;
       _showAudioPlayer = true;
+      _isSpeaking = false;
+      _isPaused = false;
     });
+  }
 
-    await flutterTts.speak(fullText);
+  // ✅ 2. TOGGLE PLAY
+  Future<void> _togglePlay() async {
+    if (_cachedAudioText.isEmpty) return;
+
+    if (_isSpeaking && !_isPaused) {
+      await _pause();
+    } else {
+      if (mounted)
+        setState(() {
+          _isSpeaking = true;
+          _isPaused = false;
+        });
+      await flutterTts.speak(_cachedAudioText);
+    }
   }
 
   Future<void> _stop() async {
     await flutterTts.stop();
-    setState(() {
-      _isSpeaking = false;
-      _isPaused = false;
-      _showAudioPlayer = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+        _showAudioPlayer = false;
+        _currentWordStart = 0;
+      });
+    }
   }
 
   Future<void> _pause() async {
     await flutterTts.pause();
-    setState(() {
-      _isSpeaking = false;
-      _isPaused = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = true;
+      });
+    }
   }
 
   void _changeSpeed(double newRate) {
-    setState(() {
-      _speechRate = newRate;
-    });
+    setState(() => _speechRate = newRate);
     flutterTts.setSpeechRate(newRate);
     if (_isSpeaking) {
-      _stop();
-      _speak(); 
+      flutterTts.stop();
+      flutterTts.speak(_cachedAudioText);
     }
+  }
+
+  // ✅ 3. SHOW FULL SCREEN PLAYER
+  void _showFullScreenPlayer() {
+    final asyncData = ref.read(devotionalContentProvider(widget.bookId));
+    if (asyncData.value == null) return;
+
+    // Get Title for the UI
+    final allReadings = asyncData.value!;
+    final monthReadings = allReadings
+        .where((r) => r.month == widget.monthIndex)
+        .toList();
+    final reading = monthReadings.firstWhere(
+      (r) => r.day == _currentDay,
+      orElse: () => monthReadings.first,
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => FullScreenDevotionalPlayer(
+        bookTitle: widget.bookTitle,
+        dailyTitle: reading.title,
+        dateString: "${widget.monthName} $_currentDay",
+        isPlaying: _isSpeaking && !_isPaused,
+        currentProgress: (_currentWordStart / _totalTextLength).clamp(0.0, 1.0),
+        speechRate: _speechRate,
+        onPlayPause: () {
+          _togglePlay();
+          Navigator.pop(context);
+          _showFullScreenPlayer();
+        },
+        onStop: () {
+          _stop();
+          Navigator.pop(context);
+        },
+        onChangeSpeed: (val) {
+          _changeSpeed(val);
+          Navigator.pop(context);
+          _showFullScreenPlayer();
+        },
+        onClose: () => Navigator.pop(context),
+      ),
+    );
   }
 
   // --- PERSISTENCE METHODS ---
@@ -220,16 +323,22 @@ class _DevotionalReaderScreenState
     }
   }
 
-  Future<void> _addHighlight(int paragraphIndex, TextSelection selection, String colorHex) async {
+  Future<void> _addHighlight(
+    int paragraphIndex,
+    TextSelection selection,
+    String colorHex,
+  ) async {
     if (!selection.isValid || selection.isCollapsed) return;
 
-    _userHighlights.removeWhere((h) =>
-        h.bookId == widget.bookId &&
-        h.month == widget.monthIndex &&
-        h.day == _currentDay &&
-        h.paragraphIndex == paragraphIndex &&
-        h.startOffset < selection.end &&
-        h.endOffset > selection.start);
+    _userHighlights.removeWhere(
+      (h) =>
+          h.bookId == widget.bookId &&
+          h.month == widget.monthIndex &&
+          h.day == _currentDay &&
+          h.paragraphIndex == paragraphIndex &&
+          h.startOffset < selection.end &&
+          h.endOffset > selection.start,
+    );
 
     final newHighlight = DevotionalHighlight(
       bookId: widget.bookId,
@@ -251,18 +360,22 @@ class _DevotionalReaderScreenState
 
   Future<void> _clearHighlightsForParagraph(int paragraphIndex) async {
     setState(() {
-      _userHighlights.removeWhere((h) =>
-          h.bookId == widget.bookId &&
-          h.month == widget.monthIndex &&
-          h.day == _currentDay &&
-          h.paragraphIndex == paragraphIndex);
+      _userHighlights.removeWhere(
+        (h) =>
+            h.bookId == widget.bookId &&
+            h.month == widget.monthIndex &&
+            h.day == _currentDay &&
+            h.paragraphIndex == paragraphIndex,
+      );
     });
     _saveHighlightsToPrefs();
   }
 
   Future<void> _saveHighlightsToPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    final String jsonString = json.encode(_userHighlights.map((h) => h.toJson()).toList());
+    final String jsonString = json.encode(
+      _userHighlights.map((h) => h.toJson()).toList(),
+    );
     await prefs.setString('highlights_${widget.bookId}', jsonString);
   }
 
@@ -270,7 +383,9 @@ class _DevotionalReaderScreenState
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
@@ -280,7 +395,10 @@ class _DevotionalReaderScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Display Settings", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text(
+                    "Display Settings",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 30),
                   Row(
                     children: [
@@ -302,7 +420,12 @@ class _DevotionalReaderScreenState
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Center(child: Text("Font Size: ${_fontSize.toInt()}", style: const TextStyle(color: Colors.grey))),
+                  Center(
+                    child: Text(
+                      "Font Size: ${_fontSize.toInt()}",
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ),
                 ],
               ),
             );
@@ -312,62 +435,85 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // ✅ BUILD AUDIO CONTROL PANEL (Bottom Sheet)
-  Widget _buildAudioControlPanel(bool isDark) {
+  // ✅ MINI AUDIO PLAYER (Expandable)
+  Widget _buildMiniPlayer(bool isDark) {
     if (!_showAudioPlayer) return const SizedBox.shrink();
 
     final bgColor = isDark ? Colors.grey[900] : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, -2))],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "Reading Day $_currentDay",
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textColor),
+    return GestureDetector(
+      onTap: _showFullScreenPlayer, // ✅ Click to Expand
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        decoration: BoxDecoration(
+          color: bgColor,
+          border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 4,
+              offset: Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Icon Placeholder for Cover
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
               ),
-              IconButton(icon: const Icon(Icons.close, size: 20), onPressed: _stop),
-            ],
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              DropdownButton<double>(
-                value: _speechRate,
-                underline: Container(),
-                icon: const Icon(Icons.speed, size: 18),
-                items: [0.3, 0.5, 0.75, 1.0].map((rate) => DropdownMenuItem(value: rate, child: Text("${(rate * 2).toStringAsFixed(1)}x"))).toList(),
-                onChanged: (val) { if (val != null) _changeSpeed(val); },
+              child: Icon(
+                Icons.menu_book,
+                color: Theme.of(context).primaryColor,
               ),
-              const SizedBox(width: 20),
-              IconButton(icon: const Icon(Icons.replay), onPressed: () { _stop(); _speak(); }),
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: Theme.of(context).primaryColor,
-                child: IconButton(
-                  icon: Icon(_isSpeaking && !_isPaused ? Icons.pause : Icons.play_arrow),
-                  color: Colors.white,
-                  onPressed: () {
-                    if (_isSpeaking && !_isPaused) _pause();
-                    else _speak();
-                  },
-                ),
+            ),
+            const SizedBox(width: 12),
+
+            // Title
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "Day $_currentDay",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: textColor,
+                    ),
+                  ),
+                  Text(
+                    widget.bookTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: textColor.withOpacity(0.7),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 20),
-              IconButton(icon: const Icon(Icons.stop), color: Colors.red, onPressed: _stop),
-            ],
-          ),
-        ],
+            ),
+
+            // Play/Pause
+            IconButton(
+              icon: Icon(
+                _isSpeaking && !_isPaused
+                    ? Icons.pause_circle_filled
+                    : Icons.play_circle_fill,
+              ),
+              iconSize: 40,
+              color: Theme.of(context).primaryColor,
+              onPressed: _togglePlay,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -389,8 +535,21 @@ class _DevotionalReaderScreenState
       appBar: AppBar(
         title: Column(
           children: [
-            Text(widget.monthName.toUpperCase(), style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: isDark ? Colors.grey : Colors.grey[700])),
-            Text("Day $_currentDay", style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
+            Text(
+              widget.monthName.toUpperCase(),
+              style: TextStyle(
+                fontSize: 12,
+                letterSpacing: 1.5,
+                color: isDark ? Colors.grey : Colors.grey[700],
+              ),
+            ),
+            Text(
+              "Day $_currentDay",
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         backgroundColor: bgColor,
@@ -398,23 +557,29 @@ class _DevotionalReaderScreenState
         centerTitle: true,
         iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black),
         actions: [
-          // ✅ HEADPHONE ICON
+          // ✅ HEADPHONE ICON (Prepares only)
           IconButton(
             icon: const Icon(Icons.headphones),
             tooltip: "Listen",
-            onPressed: () {
-              if (_isSpeaking) _stop();
-              else _speak();
-            },
+            onPressed: _prepareAudioPanel,
           ),
-          IconButton(icon: const Icon(Icons.format_size), tooltip: "Adjust Text Size", onPressed: _showDisplaySettings),
+          IconButton(
+            icon: const Icon(Icons.format_size),
+            tooltip: "Adjust Text Size",
+            onPressed: _showDisplaySettings,
+          ),
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () {
               asyncData.whenData((allReadings) {
-                final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
+                final monthReadings = allReadings
+                    .where((r) => r.month == widget.monthIndex)
+                    .toList();
                 monthReadings.sort((a, b) => a.day.compareTo(b.day));
-                final currentReading = monthReadings.firstWhere((r) => r.day == _currentDay, orElse: () => monthReadings[0]);
+                final currentReading = monthReadings.firstWhere(
+                  (r) => r.day == _currentDay,
+                  orElse: () => monthReadings[0],
+                );
                 _shareContent(currentReading, widget.bookTitle);
               });
             },
@@ -422,19 +587,24 @@ class _DevotionalReaderScreenState
         ],
       ),
       // ✅ BOTTOM SHEET FOR AUDIO
-      bottomSheet: _showAudioPlayer ? _buildAudioControlPanel(isDark) : null,
-      
+      bottomSheet: _showAudioPlayer ? _buildMiniPlayer(isDark) : null,
+
       body: asyncData.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, stack) => Center(child: Text('Error: $err')),
         data: (allReadings) {
-          final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
+          final monthReadings = allReadings
+              .where((r) => r.month == widget.monthIndex)
+              .toList();
           monthReadings.sort((a, b) => a.day.compareTo(b.day));
 
-          if (monthReadings.isEmpty) return const Center(child: Text("No content."));
+          if (monthReadings.isEmpty)
+            return const Center(child: Text("No content."));
 
           if (_isInit) {
-            int initialIndex = monthReadings.indexWhere((r) => r.day == widget.initialDay);
+            int initialIndex = monthReadings.indexWhere(
+              (r) => r.day == widget.initialDay,
+            );
             if (initialIndex == -1) initialIndex = 0;
             _pageController = PageController(initialPage: initialIndex);
             _isInit = false;
@@ -460,32 +630,51 @@ class _DevotionalReaderScreenState
                 },
                 itemBuilder: (context, index) {
                   final reading = monthReadings[index];
-                  final List<String> cleanParagraphs = _reflowText(reading.content);
+                  final List<String> cleanParagraphs = _reflowText(
+                    reading.content,
+                  );
 
                   return NotificationListener<ScrollNotification>(
                     onNotification: (ScrollNotification notification) {
                       if (notification.metrics.axis == Axis.vertical) {
-                         final metrics = notification.metrics;
-                         final progress = metrics.maxScrollExtent == 0 ? 1.0 : metrics.pixels / metrics.maxScrollExtent;
-                         if ((progress - _readingProgress).abs() > 0.01) {
-                           Future.microtask(() {
-                             if (mounted) setState(() => _readingProgress = progress.clamp(0.0, 1.0));
-                           });
-                         }
+                        final metrics = notification.metrics;
+                        final progress = metrics.maxScrollExtent == 0
+                            ? 1.0
+                            : metrics.pixels / metrics.maxScrollExtent;
+                        if ((progress - _readingProgress).abs() > 0.01) {
+                          Future.microtask(() {
+                            if (mounted)
+                              setState(
+                                () =>
+                                    _readingProgress = progress.clamp(0.0, 1.0),
+                              );
+                          });
+                        }
                       }
                       return false;
                     },
                     child: SingleChildScrollView(
                       // ✅ Padding adjusted for bottom audio player
-                      padding: _showAudioPlayer 
-                          ? const EdgeInsets.fromLTRB(20, 10, 20, 130) 
-                          : const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      padding: _showAudioPlayer
+                          ? const EdgeInsets.fromLTRB(20, 10, 20, 130)
+                          : const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
                       child: Column(
                         children: [
                           SelectableText(
                             reading.title,
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: _fontSize + 6, fontWeight: FontWeight.bold, color: isDark ? Colors.tealAccent : const Color(0xFF7D2D3B), fontFamily: 'Georgia', height: 1.3),
+                            style: TextStyle(
+                              fontSize: _fontSize + 6,
+                              fontWeight: FontWeight.bold,
+                              color: isDark
+                                  ? Colors.tealAccent
+                                  : const Color(0xFF7D2D3B),
+                              fontFamily: 'Georgia',
+                              height: 1.3,
+                            ),
                           ),
                           const SizedBox(height: 24),
 
@@ -494,33 +683,85 @@ class _DevotionalReaderScreenState
                               children: [
                                 Container(
                                   margin: const EdgeInsets.only(bottom: 30),
-                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 25),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 25,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: isDark ? Colors.grey[850] : const Color(0xFFF9F9F9),
+                                    color: isDark
+                                        ? Colors.grey[850]
+                                        : const Color(0xFFF9F9F9),
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: isDark ? Colors.teal.withOpacity(0.3) : Colors.grey.shade300),
-                                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))]
+                                    border: Border.all(
+                                      color: isDark
+                                          ? Colors.teal.withOpacity(0.3)
+                                          : Colors.grey.shade300,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.05),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
                                   ),
                                   child: Column(
                                     children: [
-                                      SelectableText(reading.verse, textAlign: TextAlign.center, style: TextStyle(fontStyle: FontStyle.italic, fontSize: _fontSize, color: verseColor, height: 1.6, fontFamily: 'Georgia')),
+                                      SelectableText(
+                                        reading.verse,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontStyle: FontStyle.italic,
+                                          fontSize: _fontSize,
+                                          color: verseColor,
+                                          height: 1.6,
+                                          fontFamily: 'Georgia',
+                                        ),
+                                      ),
                                       const SizedBox(height: 15),
-                                      Text("- ${reading.verseRef}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: _fontSize - 2, color: isDark ? Colors.teal[200] : Colors.teal[800])),
+                                      Text(
+                                        "- ${reading.verseRef}",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: _fontSize - 2,
+                                          color: isDark
+                                              ? Colors.teal[200]
+                                              : Colors.teal[800],
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
-                                Positioned(top: 10, left: 10, child: Icon(Icons.format_quote, color: Colors.grey.withOpacity(0.2), size: 40)),
+                                Positioned(
+                                  top: 10,
+                                  left: 10,
+                                  child: Icon(
+                                    Icons.format_quote,
+                                    color: Colors.grey.withOpacity(0.2),
+                                    size: 40,
+                                  ),
+                                ),
                               ],
                             ),
 
                           ...List.generate(cleanParagraphs.length, (paraIndex) {
                             final paraText = cleanParagraphs[paraIndex];
-                            final bool containsSearch = widget.searchQuery != null && widget.searchQuery!.isNotEmpty && paraText.toLowerCase().contains(widget.searchQuery!.toLowerCase());
+                            final bool containsSearch =
+                                widget.searchQuery != null &&
+                                widget.searchQuery!.isNotEmpty &&
+                                paraText.toLowerCase().contains(
+                                  widget.searchQuery!.toLowerCase(),
+                                );
 
                             if (containsSearch) {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (_highlightKey.currentContext != null) {
-                                  Scrollable.ensureVisible(_highlightKey.currentContext!, duration: const Duration(milliseconds: 600), curve: Curves.easeInOut, alignment: 0.3);
+                                  Scrollable.ensureVisible(
+                                    _highlightKey.currentContext!,
+                                    duration: const Duration(milliseconds: 600),
+                                    curve: Curves.easeInOut,
+                                    alignment: 0.3,
+                                  );
                                 }
                               });
                             }
@@ -530,32 +771,102 @@ class _DevotionalReaderScreenState
                               child: Container(
                                 key: containsSearch ? _highlightKey : null,
                                 child: SelectableText.rich(
-                                  TextSpan(children: _buildRichText(paraText, widget.searchQuery, paraIndex, textColor, isDark)),
+                                  TextSpan(
+                                    children: _buildRichText(
+                                      paraText,
+                                      widget.searchQuery,
+                                      paraIndex,
+                                      textColor,
+                                      isDark,
+                                    ),
+                                  ),
                                   textAlign: TextAlign.justify,
-                                  style: TextStyle(fontSize: _fontSize, height: 1.8, color: textColor, fontFamily: 'Georgia'),
-                                  onSelectionChanged: (selection, cause) { _currentSelection = selection; _focusedParagraphIndex = paraIndex; },
-                                  contextMenuBuilder: (context, editableTextState) {
-                                    return AdaptiveTextSelectionToolbar(
-                                      anchors: editableTextState.contextMenuAnchors,
-                                      children: [
-                                        TextSelectionToolbarTextButton(padding: const EdgeInsets.all(12.0), onPressed: () => editableTextState.copySelection(SelectionChangedCause.toolbar), child: const Icon(Icons.copy, size: 20)),
-                                        _buildColorButton(paraIndex, "0xFF81C784", Colors.green, editableTextState),
-                                        _buildColorButton(paraIndex, "0xFFFFF59D", Colors.yellow, editableTextState),
-                                        _buildColorButton(paraIndex, "0xFF64B5F6", Colors.blue, editableTextState),
-                                        _buildColorButton(paraIndex, "0xFFF06292", Colors.pink, editableTextState),
-                                        TextSelectionToolbarTextButton(padding: const EdgeInsets.all(12.0), onPressed: () { _clearHighlightsForParagraph(paraIndex); editableTextState.hideToolbar(); }, child: const Icon(Icons.format_clear, size: 20, color: Colors.red)),
-                                      ],
-                                    );
+                                  style: TextStyle(
+                                    fontSize: _fontSize,
+                                    height: 1.8,
+                                    color: textColor,
+                                    fontFamily: 'Georgia',
+                                  ),
+                                  onSelectionChanged: (selection, cause) {
+                                    _currentSelection = selection;
+                                    _focusedParagraphIndex = paraIndex;
                                   },
+                                  contextMenuBuilder:
+                                      (context, editableTextState) {
+                                        return AdaptiveTextSelectionToolbar(
+                                          anchors: editableTextState
+                                              .contextMenuAnchors,
+                                          children: [
+                                            TextSelectionToolbarTextButton(
+                                              padding: const EdgeInsets.all(
+                                                12.0,
+                                              ),
+                                              onPressed: () => editableTextState
+                                                  .copySelection(
+                                                    SelectionChangedCause
+                                                        .toolbar,
+                                                  ),
+                                              child: const Icon(
+                                                Icons.copy,
+                                                size: 20,
+                                              ),
+                                            ),
+                                            _buildColorButton(
+                                              paraIndex,
+                                              "0xFF81C784",
+                                              Colors.green,
+                                              editableTextState,
+                                            ),
+                                            _buildColorButton(
+                                              paraIndex,
+                                              "0xFFFFF59D",
+                                              Colors.yellow,
+                                              editableTextState,
+                                            ),
+                                            _buildColorButton(
+                                              paraIndex,
+                                              "0xFF64B5F6",
+                                              Colors.blue,
+                                              editableTextState,
+                                            ),
+                                            _buildColorButton(
+                                              paraIndex,
+                                              "0xFFF06292",
+                                              Colors.pink,
+                                              editableTextState,
+                                            ),
+                                            TextSelectionToolbarTextButton(
+                                              padding: const EdgeInsets.all(
+                                                12.0,
+                                              ),
+                                              onPressed: () {
+                                                _clearHighlightsForParagraph(
+                                                  paraIndex,
+                                                );
+                                                editableTextState.hideToolbar();
+                                              },
+                                              child: const Icon(
+                                                Icons.format_clear,
+                                                size: 20,
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      },
                                 ),
                               ),
                             );
                           }),
-                          
+
                           const SizedBox(height: 20),
                           Divider(color: Colors.grey.withOpacity(0.3)),
                           const SizedBox(height: 20),
-                          _buildBottomNavigation(context, index, monthReadings.length),
+                          _buildBottomNavigation(
+                            context,
+                            index,
+                            monthReadings.length,
+                          ),
                           const SizedBox(height: 50),
                         ],
                       ),
@@ -565,17 +876,29 @@ class _DevotionalReaderScreenState
               ),
 
               Positioned(
-                right: 2, top: 0, bottom: 0,
+                right: 2,
+                top: 0,
+                bottom: 0,
                 child: Container(
                   width: 6,
                   margin: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(color: isDark ? Colors.grey[800] : Colors.grey[300], borderRadius: BorderRadius.circular(3)),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.grey[800] : Colors.grey[300],
+                    borderRadius: BorderRadius.circular(3),
+                  ),
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: FractionallySizedBox(
-                      heightFactor: _readingProgress == 0 ? 0.02 : _readingProgress, 
+                      heightFactor: _readingProgress == 0
+                          ? 0.02
+                          : _readingProgress,
                       widthFactor: 1.0,
-                      child: Container(decoration: BoxDecoration(color: colorScheme.primary, borderRadius: BorderRadius.circular(3))),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -588,82 +911,393 @@ class _DevotionalReaderScreenState
   }
 
   // --- WIDGET HELPERS ---
-  Widget _buildBottomNavigation(BuildContext context, int index, int totalLength) {
+  Widget _buildBottomNavigation(
+    BuildContext context,
+    int index,
+    int totalLength,
+  ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         if (index > 0)
-          OutlinedButton.icon(onPressed: () => _pageController?.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut), icon: const Icon(Icons.arrow_back_ios, size: 16), label: const Text("Previous"), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))))
-        else const SizedBox(width: 10),
+          OutlinedButton.icon(
+            onPressed: () => _pageController?.previousPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            ),
+            icon: const Icon(Icons.arrow_back_ios, size: 16),
+            label: const Text("Previous"),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+            ),
+          )
+        else
+          const SizedBox(width: 10),
         if (index < totalLength - 1)
-          ElevatedButton.icon(onPressed: () => _pageController?.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut), icon: const Text("Next"), label: const Icon(Icons.arrow_forward_ios, size: 16), style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)))),
+          ElevatedButton.icon(
+            onPressed: () => _pageController?.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            ),
+            icon: const Text("Next"),
+            label: const Icon(Icons.arrow_forward_ios, size: 16),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+            ),
+          ),
       ],
     );
   }
 
-  Widget _buildColorButton(int index, String hex, Color color, EditableTextState state) {
+  Widget _buildColorButton(
+    int index,
+    String hex,
+    Color color,
+    EditableTextState state,
+  ) {
     return InkWell(
-      onTap: () { if (_currentSelection != null && _focusedParagraphIndex == index) { _addHighlight(index, _currentSelection!, hex); state.hideToolbar(); } },
-      child: Container(margin: const EdgeInsets.symmetric(horizontal: 8), width: 24, height: 24, decoration: BoxDecoration(color: color, shape: BoxShape.circle, border: Border.all(color: Colors.grey.shade300, width: 1))),
+      onTap: () {
+        if (_currentSelection != null && _focusedParagraphIndex == index) {
+          _addHighlight(index, _currentSelection!, hex);
+          state.hideToolbar();
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8),
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.grey.shade300, width: 1),
+        ),
+      ),
     );
   }
 
   // --- TEXT PROCESSING HELPERS ---
-  List<TextSpan> _buildRichText(String text, String? query, int paraIndex, Color? baseColor, bool isDark) {
-    List<Map<String, dynamic>> charStyles = List.generate(text.length, (index) => {'bgColor': null});
-    final myHighlights = _userHighlights.where((h) => h.bookId == widget.bookId && h.month == widget.monthIndex && h.day == _currentDay && h.paragraphIndex == paraIndex);
+  List<TextSpan> _buildRichText(
+    String text,
+    String? query,
+    int paraIndex,
+    Color? baseColor,
+    bool isDark,
+  ) {
+    List<Map<String, dynamic>> charStyles = List.generate(
+      text.length,
+      (index) => {'bgColor': null},
+    );
+    final myHighlights = _userHighlights.where(
+      (h) =>
+          h.bookId == widget.bookId &&
+          h.month == widget.monthIndex &&
+          h.day == _currentDay &&
+          h.paragraphIndex == paraIndex,
+    );
 
     for (var h in myHighlights) {
       int safeStart = h.startOffset.clamp(0, text.length);
       int safeEnd = h.endOffset.clamp(0, text.length);
-      for (int i = safeStart; i < safeEnd; i++) { charStyles[i]['bgColor'] = Color(int.parse(h.colorHex)); }
-    }
-
-    if (query != null && query.isNotEmpty) {
-      String lowerText = text.toLowerCase(); String lowerQuery = query.toLowerCase(); int matchIndex = lowerText.indexOf(lowerQuery);
-      while (matchIndex != -1) {
-        for (int i = matchIndex; i < matchIndex + lowerQuery.length && i < text.length; i++) { charStyles[i]['bgColor'] = isDark ? Colors.tealAccent.withOpacity(0.5) : Colors.yellow; }
-        matchIndex = lowerText.indexOf(lowerQuery, matchIndex + lowerQuery.length);
+      for (int i = safeStart; i < safeEnd; i++) {
+        charStyles[i]['bgColor'] = Color(int.parse(h.colorHex));
       }
     }
 
-    List<TextSpan> spans = []; if (text.isEmpty) return spans;
-    int currentStart = 0; var currentStyle = charStyles[0];
+    if (query != null && query.isNotEmpty) {
+      String lowerText = text.toLowerCase();
+      String lowerQuery = query.toLowerCase();
+      int matchIndex = lowerText.indexOf(lowerQuery);
+      while (matchIndex != -1) {
+        for (
+          int i = matchIndex;
+          i < matchIndex + lowerQuery.length && i < text.length;
+          i++
+        ) {
+          charStyles[i]['bgColor'] = isDark
+              ? Colors.tealAccent.withOpacity(0.5)
+              : Colors.yellow;
+        }
+        matchIndex = lowerText.indexOf(
+          lowerQuery,
+          matchIndex + lowerQuery.length,
+        );
+      }
+    }
+
+    List<TextSpan> spans = [];
+    if (text.isEmpty) return spans;
+    int currentStart = 0;
+    var currentStyle = charStyles[0];
 
     for (int i = 1; i < text.length; i++) {
       var style = charStyles[i];
       if (style['bgColor'] != currentStyle['bgColor']) {
-        spans.add(TextSpan(text: text.substring(currentStart, i), style: TextStyle(color: baseColor, backgroundColor: currentStyle['bgColor'] as Color?)));
-        currentStart = i; currentStyle = style;
+        spans.add(
+          TextSpan(
+            text: text.substring(currentStart, i),
+            style: TextStyle(
+              color: baseColor,
+              backgroundColor: currentStyle['bgColor'] as Color?,
+            ),
+          ),
+        );
+        currentStart = i;
+        currentStyle = style;
       }
     }
-    spans.add(TextSpan(text: text.substring(currentStart), style: TextStyle(color: baseColor, backgroundColor: currentStyle['bgColor'] as Color?)));
+    spans.add(
+      TextSpan(
+        text: text.substring(currentStart),
+        style: TextStyle(
+          color: baseColor,
+          backgroundColor: currentStyle['bgColor'] as Color?,
+        ),
+      ),
+    );
     return spans;
   }
 
   List<String> _reflowText(String rawContent) {
     String cleanContent = rawContent
-        .replaceAll(RegExp(r'\[\d+\]'), '').replaceAll(RegExp(r'\(\d+\)'), '')
-        .replaceAllMapped(RegExp(r'(?<=[a-zA-Z])(?=\d)'), (match) => ' ').replaceAllMapped(RegExp(r'(?<=\d)(?=[a-zA-Z])'), (match) => ' ')
-        .replaceAllMapped(RegExp(r'(?<=[.!?])(?=[A-Z])'), (match) => ' ').replaceAllMapped(RegExp(r'(?<=[a-z])(?=[A-Z])'), (match) => ' ')
+        .replaceAll(RegExp(r'\[\d+\]'), '')
+        .replaceAll(RegExp(r'\(\d+\)'), '')
+        .replaceAllMapped(RegExp(r'(?<=[a-zA-Z])(?=\d)'), (match) => ' ')
+        .replaceAllMapped(RegExp(r'(?<=\d)(?=[a-zA-Z])'), (match) => ' ')
+        .replaceAllMapped(RegExp(r'(?<=[.!?])(?=[A-Z])'), (match) => ' ')
+        .replaceAllMapped(RegExp(r'(?<=[a-z])(?=[A-Z])'), (match) => ' ')
         .replaceAll(RegExp(r'\s+'), ' ');
 
-    List<String> finalParagraphs = []; StringBuffer currentBuffer = StringBuffer(); int sentenceCount = 0;
-    RegExp sentenceSplit = RegExp(r'(?<=[.!?])\s+'); List<String> allSentences = cleanContent.split(sentenceSplit);
+    List<String> finalParagraphs = [];
+    StringBuffer currentBuffer = StringBuffer();
+    int sentenceCount = 0;
+    RegExp sentenceSplit = RegExp(r'(?<=[.!?])\s+');
+    List<String> allSentences = cleanContent.split(sentenceSplit);
 
     for (String sentence in allSentences) {
-      String s = sentence.trim(); if (s.isEmpty) continue;
-      currentBuffer.write(s); currentBuffer.write(" "); sentenceCount++;
-      if (sentenceCount >= 4) { finalParagraphs.add(currentBuffer.toString().trim()); currentBuffer.clear(); sentenceCount = 0; }
+      String s = sentence.trim();
+      if (s.isEmpty) continue;
+      currentBuffer.write(s);
+      currentBuffer.write(" ");
+      sentenceCount++;
+      if (sentenceCount >= 4) {
+        finalParagraphs.add(currentBuffer.toString().trim());
+        currentBuffer.clear();
+        sentenceCount = 0;
+      }
     }
-    if (currentBuffer.isNotEmpty) finalParagraphs.add(currentBuffer.toString().trim());
+    if (currentBuffer.isNotEmpty)
+      finalParagraphs.add(currentBuffer.toString().trim());
     return finalParagraphs;
   }
 
-  void _shareContent(dynamic reading, String bookTitle) { 
+  void _shareContent(dynamic reading, String bookTitle) {
     List<String> cleanParas = _reflowText(reading.content);
     String formattedContent = cleanParas.join("\n\n");
-    final String textToShare = "*${reading.title}*\n${widget.monthName} ${reading.day} | $bookTitle\n\n\"${reading.verse}\"\n- ${reading.verseRef}\n\n$formattedContent\n\n_Sent from Advent Study Hub_";
+    final String textToShare =
+        "*${reading.title}*\n${widget.monthName} ${reading.day} | $bookTitle\n\n\"${reading.verse}\"\n- ${reading.verseRef}\n\n$formattedContent\n\n_Sent from Advent Study Hub_";
     Share.share(textToShare);
+  }
+}
+
+// ✅ NEW FULL SCREEN PLAYER WIDGET
+class FullScreenDevotionalPlayer extends StatelessWidget {
+  final String bookTitle;
+  final String dailyTitle;
+  final String dateString;
+  final bool isPlaying;
+  final double currentProgress;
+  final double speechRate;
+  final VoidCallback onPlayPause;
+  final VoidCallback onStop;
+  final Function(double) onChangeSpeed;
+  final VoidCallback onClose;
+
+  const FullScreenDevotionalPlayer({
+    super.key,
+    required this.bookTitle,
+    required this.dailyTitle,
+    required this.dateString,
+    required this.isPlaying,
+    required this.currentProgress,
+    required this.speechRate,
+    required this.onPlayPause,
+    required this.onStop,
+    required this.onChangeSpeed,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.9,
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 15, bottom: 30),
+            width: 50,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey[400],
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+
+          // "Cover" (Generic Icon/Card since Devotionals don't pass Image paths easily here)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.grey[850] : Colors.blueGrey[50],
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 20,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.menu_book_rounded,
+                        size: 80,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                      const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text(
+                          bookTitle,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
+          // Info
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                Text(
+                  dailyTitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  dateString,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
+          // Slider
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                LinearProgressIndicator(
+                  value: currentProgress,
+                  backgroundColor: Colors.grey[300],
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).primaryColor,
+                  ),
+                  minHeight: 6,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    "${(currentProgress * 100).toInt()}% Read",
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
+          // Controls
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              DropdownButton<double>(
+                value: speechRate,
+                underline: Container(),
+                icon: const Icon(Icons.speed),
+                items: [0.3, 0.5, 0.75, 1.0, 1.25]
+                    .map(
+                      (rate) => DropdownMenuItem(
+                        value: rate,
+                        child: Text("${rate}x"),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) onChangeSpeed(val);
+                },
+              ),
+
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: Theme.of(context).primaryColor,
+                child: IconButton(
+                  icon: Icon(
+                    isPlaying ? Icons.pause : Icons.play_arrow,
+                    size: 35,
+                  ),
+                  color: Colors.white,
+                  onPressed: onPlayPause,
+                ),
+              ),
+
+              IconButton(
+                icon: const Icon(Icons.stop_circle_outlined, size: 35),
+                color: Colors.redAccent,
+                onPressed: onStop,
+              ),
+            ],
+          ),
+          const SizedBox(height: 50),
+        ],
+      ),
+    );
   }
 }
