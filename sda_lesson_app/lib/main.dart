@@ -79,8 +79,8 @@ class _MyAppState extends ConsumerState<MyApp> {
 
     // Trigger the "What's New" Dialog after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      UpdateChecker.checkAndShowUpdate(context);
-    });
+     UpdateChecker.checkAndShowUpdate(context);
+  });
   }
 
   @override

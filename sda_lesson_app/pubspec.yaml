@@ -40,6 +40,7 @@ dependencies:
   flutter_html: ^3.0.0-beta.2
   flutter_cached_pdfview: ^0.4.2
   
+  
   # Internationalization & Date Formatting
   intl: ^0.20.2
 

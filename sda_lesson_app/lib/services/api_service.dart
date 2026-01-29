@@ -1,5 +1,3 @@
-// lib/services/api_service.dart
-
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sda_lesson_app/models/quarterly.dart';
@@ -9,12 +7,13 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'dart:developer'; // Use developer log for cleaner output
 
 final apiProvider = Provider((ref) => ApiService());
 
 class ApiService {
   final Dio _dio = Dio();
-
+  
   // 1. URLS
   static const String _localProxy = 'http://127.0.0.1:8787';
   static const String _publicApi = 'https://sabbath-school.adventech.io/api/v1';
@@ -55,7 +54,7 @@ class ApiService {
     }
   }
 
-  // 5. FETCH LESSON CONTENT (Corrected for Single Page Resources)
+  // 5. FETCH LESSON CONTENT (Corrected Logic)
   Future<LessonContent> fetchLessonContent(String index) async {
     String cleanIndex = index.startsWith('/') ? index.substring(1) : index;
     List<String> parts = cleanIndex.split('/');
@@ -72,67 +71,82 @@ class ApiService {
       if (quarterlyId.startsWith('$lang-')) quarterlyId = quarterlyId.substring(lang.length + 1);
 
       if (parts.length == 4) {
+        // Specific Day Content
         url = "$_v2Api/$lang/quarterlies/$quarterlyId/lessons/$lessonId/days/${parts[3]}/read/index.json";
       } else {
+        // Full Lesson Content
         url = "$_v2Api/$lang/quarterlies/$quarterlyId/lessons/$lessonId/index.json";
       }
     } else {
       url = "$baseUrl/quarterly/$cleanIndex";
     }
 
-    print("📡 Fetching Standard Content: $url");
+    log("📡 Requesting content: $url");
 
     try {
       var response = await http.get(Uri.parse(url), headers: _headers);
 
       // ============================================================
-      // 🚀 THE FIX: DETECT IF CONTENT IS MISSING
+      // 🚀 VALIDATION LOGIC: Is this actually empty?
       // ============================================================
       bool needsFallback = false;
 
+      // 1. Check HTTP Status
       if (response.statusCode != 200 || response.body.trim().startsWith('<')) {
         needsFallback = true;
       } else {
-        // Even if 200 OK, check if the actual text content is missing
-        final Map<String, dynamic> data = json.decode(response.body);
-        final tempContent = LessonContent.fromJson(data);
-        
-        // If NO content text AND NO PDF -> It's effectively empty
-        if ((tempContent.content == null || tempContent.content!.isEmpty) && 
-            (tempContent.pdf == null)) {
-           print("⚠️ Standard API returned empty data.");
-           needsFallback = true;
+        // 2. Decode and Inspect
+        try {
+          final Map<String, dynamic> data = json.decode(response.body);
+          final tempContent = LessonContent.fromJson(data);
+          
+          // Check for ANY valid content
+          bool hasText = (tempContent.content != null && tempContent.content!.isNotEmpty);
+          bool hasPdf = (tempContent.pdf != null && tempContent.pdf!.isNotEmpty);
+          bool hasDays = (tempContent.days != null && tempContent.days!.isNotEmpty);
+          // ✅ CRITICAL: Check for 'children' (Table of Contents)
+          bool hasChapters = (tempContent.children != null && tempContent.children!.isNotEmpty);
+
+          // Only fallback if EVERYTHING is missing
+          if (!hasText && !hasPdf && !hasDays && !hasChapters) {
+             log("⚠️ Standard API data seems empty (No Text, PDF, Days, or Chapters).");
+             needsFallback = true;
+          }
+        } catch (e) {
+          log("⚠️ parsing check failed: $e");
+          needsFallback = true; 
         }
       }
 
       // ============================================================
-      // ♻️ FALLBACK: TRY RESOURCE API (Where Single Page Lessons Live)
+      // ♻️ FALLBACK: TRY RESOURCE API
       // ============================================================
       if (needsFallback && parts.length >= 3) {
         // Resource URL format: .../resources/quarterly/lesson/index.json
         String resourceUrl = "$_v2Api/$lang/resources/$quarterlyId/$lessonId/index.json";
-        print("🔄 Trying Resource API: $resourceUrl");
+        log("🔄 Switching to Resource API: $resourceUrl");
         
         final resourceResponse = await http.get(Uri.parse(resourceUrl), headers: _headers);
         
         if (resourceResponse.statusCode == 200 && !resourceResponse.body.trim().startsWith('<')) {
            response = resourceResponse; // ✅ Success! Use this response.
-           print("✅ Resource API success!");
+           log("✅ Resource API success!");
         }
       }
 
+      // Final Return
       if (response.statusCode == 200) {
         if (response.body.trim().startsWith('<')) {
-           return LessonContent(days: [], title: "No Text Content"); 
+           return LessonContent(days: [], title: "No Content Found"); 
         }
         final Map<String, dynamic> data = json.decode(response.body);
         return LessonContent.fromJson(data);
       } else {
-        return LessonContent(days: [], title: "Error");
+        return LessonContent(days: [], title: "Error ${response.statusCode}");
       }
     } catch (e) {
-      print("❌ Connection Error: $e");
-      return LessonContent(days: [], title: "Error loading content");
+      log("❌ Connection Error: $e");
+      return LessonContent(days: [], title: "Connection Error");
     }
   }
 }

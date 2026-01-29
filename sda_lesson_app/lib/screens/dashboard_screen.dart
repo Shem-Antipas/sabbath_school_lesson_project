@@ -35,20 +35,31 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  DailyVerse _todayVerse = DailyVerseService.getPlaceholderVerse();
+  // 1. Initialize with a default value (so UI isn't empty on startup)
+  DailyVerse _todayVerse = const DailyVerse(
+    text: "Loading verse...", 
+    reference: ""
+  );
   
-  // ✅ 1. LOADING STATE (Replaces the dialog)
   bool _isLessonLoading = false;
 
   @override
   void initState() {
     super.initState();
+    
+    // 2. FETCH DATA AFTER FRAME LOADS
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) await _checkAndShowSabbathPopup();
       _refreshUser();
-      await DailyVerseService.init();
+      
+      // ✅ FIX: Just call getTodayVerse(). It handles init() automatically now.
       final verse = await DailyVerseService.getTodayVerse();
-      if (mounted) setState(() => _todayVerse = verse);
+      
+      if (mounted) {
+        setState(() {
+          _todayVerse = verse;
+        });
+      }
     });
   }
 

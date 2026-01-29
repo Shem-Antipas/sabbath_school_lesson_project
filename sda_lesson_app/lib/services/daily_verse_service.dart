@@ -12,6 +12,10 @@ class DailyVerseService {
   static final List<DailyVerse> _allVerses = [
     // Pentateuch & History
     const DailyVerse(
+      text: "Have I not commanded thee? Be strong and of a good courage.",
+      reference: "Joshua 1:9",
+    ),
+    const DailyVerse(
       text: "In the beginning God created the heavens and the earth.",
       reference: "Genesis 1:1",
     ),

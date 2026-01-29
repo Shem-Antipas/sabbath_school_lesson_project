@@ -6,18 +6,16 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:sda_lesson_app/providers/data_providers.dart';
 import 'package:sda_lesson_app/models/lesson_content.dart' as reader;
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter_tts/flutter_tts.dart'; 
 import 'dart:io';
 import 'dart:convert';
 import 'lesson_list_screen.dart';
 
 // --- STATE PROVIDERS ---
 
-// 1. Text Size Provider
 final textSizeProvider = StateProvider<double>((ref) => 18.0);
 
-// 2. Specific Day Content Provider (Handles Cache & API)
 final specificDayContentProvider = FutureProvider.family<reader.LessonContent, String>((ref, lessonIndex) async {
-  // A. Check for offline file first
   try {
     final directory = await getApplicationDocumentsDirectory();
     final fileName = "${lessonIndex.replaceAll('/', '_')}.json";
@@ -30,12 +28,9 @@ final specificDayContentProvider = FutureProvider.family<reader.LessonContent, S
   } catch (e) {
     debugPrint("Cache read error: $e");
   }
-
-  // B. If no cache, fetch from API
   return ref.read(apiProvider).fetchLessonContent(lessonIndex);
 });
 
-// ✅ CHANGED: Switched to ConsumerStatefulWidget to handle ScrollController
 class ReaderScreen extends ConsumerStatefulWidget {
   final String lessonIndex;
   final String lessonTitle;
@@ -51,27 +46,141 @@ class ReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _ReaderScreenState extends ConsumerState<ReaderScreen> {
-  // ✅ ADDED: Scroll Controller
   final ScrollController _scrollController = ScrollController();
 
-  static const List<String> _dayNames = [
-    "Sabbath", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
-  ];
+  // ✅ AUDIO PLAYER VARIABLES
+  final FlutterTts flutterTts = FlutterTts();
+  bool _isSpeaking = false;
+  bool _isPaused = false;
+  double _speechRate = 0.5;
+  bool _showAudioPlayer = false;
+  
+  // ✅ CACHE THE TEXT
+  String _cachedAudioText = ""; 
+
+  @override
+  void initState() {
+    super.initState();
+    _initTts(); 
+  }
 
   @override
   void dispose() {
-    _scrollController.dispose(); // ✅ Dispose controller to prevent leaks
+    _scrollController.dispose();
+    flutterTts.stop(); 
     super.dispose();
+  }
+
+  // ✅ INITIALIZE TTS ENGINE
+  Future<void> _initTts() async {
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setSpeechRate(_speechRate);
+
+    await flutterTts.setIosAudioCategory(IosTextToSpeechAudioCategory.playback,
+        [
+          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+        ],
+        IosTextToSpeechAudioMode.defaultMode
+    );
+
+    flutterTts.setStartHandler(() {
+      if(mounted) setState(() { _isSpeaking = true; _isPaused = false; });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      if(mounted) setState(() { _isSpeaking = false; _isPaused = false; });
+    });
+
+    flutterTts.setErrorHandler((msg) {
+      if(mounted) setState(() { _isSpeaking = false; _isPaused = false; });
+    });
+  }
+
+  // ✅ CLEAN HTML FOR AUDIO
+  String _cleanHtmlForTts(String htmlContent) {
+    String temp = htmlContent
+        .replaceAll(RegExp(r'<br\s*/?>'), '. ') 
+        .replaceAll(RegExp(r'<\/p>'), '. ');    
+    
+    // Remove HTML tags
+    temp = temp.replaceAll(RegExp(r'<[^>]*>'), '');
+    
+    // Fix HTML entities
+    temp = temp.replaceAll('&nbsp;', ' ')
+               .replaceAll('&amp;', ' and ')
+               .replaceAll('&quot;', '"')
+               .replaceAll('&#8217;', "'")
+               .replaceAll('&#8220;', '"')
+               .replaceAll('&#8221;', '"');
+               
+    return temp;
+  }
+
+  // ✅ 1. PREPARE AUDIO (Button Click)
+  // This opens the panel and prepares text, but DOES NOT play automatically.
+  void _prepareAudioPanel(reader.Day activeDay, String? content) {
+    if (_showAudioPlayer) {
+      _stop(); // Toggle off if already open
+      return;
+    }
+
+    String textToRead = content ?? activeDay.content;
+    if (textToRead.isEmpty) return;
+
+    String cleanText = _cleanHtmlForTts(textToRead);
+    
+    setState(() {
+      _cachedAudioText = "${activeDay.title}. \n\n $cleanText";
+      _showAudioPlayer = true;
+      _isSpeaking = false; // Reset state
+      _isPaused = false;
+    });
+  }
+
+  // ✅ 2. PLAY/PAUSE TOGGLE (Bottom Sheet Click)
+  Future<void> _togglePlay() async {
+    if (_cachedAudioText.isEmpty) return;
+
+    if (_isSpeaking && !_isPaused) {
+      // If playing, pause it
+      await flutterTts.pause();
+      if(mounted) setState(() => _isPaused = true);
+    } else {
+      // If paused or stopped, play
+      if(mounted) setState(() { _isSpeaking = true; _isPaused = false; });
+      await flutterTts.speak(_cachedAudioText);
+    }
+  }
+
+  Future<void> _stop() async {
+    await flutterTts.stop();
+    if(mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+        _showAudioPlayer = false; // Close panel
+      });
+    }
+  }
+
+  void _changeSpeed(double newRate) {
+    setState(() => _speechRate = newRate);
+    flutterTts.setSpeechRate(newRate);
+    if (_isSpeaking) {
+      // If speed changes while playing, restart to apply
+      flutterTts.stop();
+      flutterTts.speak(_cachedAudioText);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-    // Note: We don't watch textSizeProvider here globally to avoid rebuilding the whole scaffold
-    // We pass it down or watch it inside the content widget.
 
-    // Parsing IDs
     final List<String> pathSegments = widget.lessonIndex.split('/');
     final String parentIndex = pathSegments.length > 3
         ? pathSegments.sublist(0, 3).join('/')
@@ -80,7 +189,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         ? "${pathSegments[0]}/${pathSegments[1]}"
         : "";
 
-    // 1. Fetch Parent Data (Lesson Structure/Days list)
     final asyncParentContent = ref.watch(lessonContentProvider(parentIndex));
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
@@ -91,7 +199,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
         if (daysList.isEmpty) return _buildErrorBody(backgroundColor, "No days found.");
 
-        // Identify active day
         final String currentDayId = widget.lessonIndex.split('/').last;
         final int activeDayIndex = daysList.indexWhere(
           (d) => d.id == currentDayId || d.index == currentDayId,
@@ -99,7 +206,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final int safeIndex = activeDayIndex != -1 ? activeDayIndex : 0;
         final reader.Day activeDay = daysList[safeIndex];
 
-        // Cover Image Logic
         String? coverImage = content.lesson?.cover;
         if (coverImage != null && !coverImage.startsWith('http')) {
           coverImage = "https://sabbath-school.adventech.io/api/v1/$parentIndex/cover.png";
@@ -108,19 +214,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         return Scaffold(
           backgroundColor: backgroundColor,
           extendBodyBehindAppBar: true, 
-          
-          // Drawer for Mobile
           drawer: !isDesktop
               ? _buildNavigationMenu(context, daysList, safeIndex, isDrawer: true, isDark: isDark)
               : null,
           
           appBar: _buildAppBar(context, ref, activeDay, safeIndex, daysList.length, quarterlyId, isDesktop),
           
+          // ✅ BOTTOM SHEET FOR AUDIO
+          bottomSheet: _showAudioPlayer ? _buildAudioControlPanel(isDark, activeDay.title) : null,
+
           bottomNavigationBar: _buildBottomNavigation(context, daysList, safeIndex, isDark),
           
           body: Row(
             children: [
-              // Sidebar for Desktop
               if (isDesktop)
                 _buildNavigationMenu(context, daysList, safeIndex, isDrawer: false, isDark: isDark),
               
@@ -135,7 +241,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ],
           ),
           
-          // ✅ FIXED: Scroll to top button now works
           floatingActionButton: FloatingActionButton(
              mini: true,
              backgroundColor: isDark ? Colors.grey[800] : Colors.blue,
@@ -175,6 +280,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       String quarterlyId,
       bool isDesktop) {
     
+    // We need the data to extract text for audio
+    final asyncDayContent = ref.watch(specificDayContentProvider(widget.lessonIndex));
+
     return AppBar(
       backgroundColor: Colors.black.withOpacity(0.4), 
       elevation: 0,
@@ -202,35 +310,67 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               onPressed: () => Scaffold.of(context).openDrawer(),
             )),
       actions: [
-        // Text Size Toggle
+        // ✅ 1. HEADPHONE ICON (Prepares Audio Only)
+        IconButton(
+          icon: const Icon(Icons.headphones, color: Colors.white),
+          tooltip: "Listen",
+          onPressed: () {
+             // Get content from provider state or fall back to activeDay default
+             String? contentToRead = asyncDayContent.value?.content;
+             _prepareAudioPanel(activeDay, contentToRead);
+          },
+        ),
+        
+        // 2. Text Size
         IconButton(
           icon: const Icon(Icons.text_fields, color: Colors.white),
           tooltip: "Adjust Text Size",
           onPressed: () => _showTextSettings(context),
         ),
-        IconButton(
-          icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
-          tooltip: "Quarterly Lessons",
-          onPressed: () {
-            if (Navigator.canPop(context)) {
-              Navigator.pop(context);
-            } else if (quarterlyId.isNotEmpty) {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (context) => LessonListScreen(quarterlyId: quarterlyId, quarterlyTitle: "Lessons")
-              ));
+
+        // 3. Popup Menu
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.white),
+          onSelected: (value) {
+            if (value == 'grid') {
+               if (quarterlyId.isNotEmpty) {
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (context) => LessonListScreen(quarterlyId: quarterlyId, quarterlyTitle: "Lessons")
+                  ));
+               }
+            } else if (value == 'share') {
+               final String shareUrl = "https://sabbath-school.adventech.io/${widget.lessonIndex}";
+               Share.share('Check out this lesson: "${activeDay.title}"\n\n$shareUrl');
+            } else if (value == 'download') {
+               _handleDownload(context, ref);
             }
           },
-        ),
-        IconButton(
-          icon: const Icon(Icons.share, color: Colors.white),
-          onPressed: () {
-             final String shareUrl = "https://sabbath-school.adventech.io/${widget.lessonIndex}";
-             Share.share('Check out this lesson: "${activeDay.title}"\n\n$shareUrl');
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.download_for_offline_outlined, color: Colors.white),
-          onPressed: () => _handleDownload(context, ref),
+          itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+            const PopupMenuItem<String>(
+              value: 'grid',
+              child: ListTile(
+                leading: Icon(Icons.grid_view_rounded, color: Colors.black54),
+                title: Text('Quarterly View'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            const PopupMenuItem<String>(
+              value: 'share',
+              child: ListTile(
+                leading: Icon(Icons.share, color: Colors.black54),
+                title: Text('Share Lesson'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            const PopupMenuItem<String>(
+              value: 'download',
+              child: ListTile(
+                leading: Icon(Icons.download_for_offline_outlined, color: Colors.black54),
+                title: Text('Download Offline'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
         ),
       ],
       bottom: PreferredSize(
@@ -245,6 +385,139 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
+  // ✅ BUILD AUDIO CONTROL PANEL (Fixed Play Logic)
+  Widget _buildAudioControlPanel(bool isDark, String title) {
+    if (!_showAudioPlayer) return const SizedBox.shrink();
+
+    final bgColor = isDark ? Colors.grey[900] : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, -2))],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  "Reading: $title",
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textColor),
+                ),
+              ),
+              IconButton(icon: const Icon(Icons.close, size: 20), onPressed: _stop),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Speed
+              DropdownButton<double>(
+                value: _speechRate,
+                underline: Container(),
+                icon: const Icon(Icons.speed, size: 18),
+                items: [0.5, 0.75, 1.0, 1.25, 1.5].map((rate) => DropdownMenuItem(value: rate, child: Text("${rate}x"))).toList(),
+                onChanged: (val) { if (val != null) _changeSpeed(val); },
+              ),
+              const SizedBox(width: 20),
+              
+              // Replay
+              IconButton(
+                icon: const Icon(Icons.replay), 
+                onPressed: () { 
+                  flutterTts.stop(); 
+                  flutterTts.speak(_cachedAudioText); 
+                }
+              ),
+              
+              // Play/Pause (FIXED)
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: Colors.blue,
+                child: IconButton(
+                  icon: Icon(_isSpeaking && !_isPaused ? Icons.pause : Icons.play_arrow),
+                  color: Colors.white,
+                  onPressed: _togglePlay, // ✅ Calls the corrected logic
+                ),
+              ),
+              const SizedBox(width: 20),
+              
+              // Stop
+              IconButton(icon: const Icon(Icons.stop), color: Colors.red, onPressed: _stop),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ... (Rest of the file remains unchanged: _buildMainContent, _showTextSettings, _handleDownload, _showBibleVerse, _buildHeaderImage, _buildNavigationMenu, _buildBottomNavigation, _navigateToDay) ...
+  
+  // --- BOTTOM NAV ---
+  Widget _buildBottomNavigation(BuildContext context, List<reader.Day> daysList, int activeIndex, bool isDark) {
+    final hasPrev = activeIndex > 0;
+    final hasNext = activeIndex < daysList.length - 1;
+    final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: bgColor,
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -5))],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              if (hasPrev)
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _stop(); 
+                    _navigateToDay(context, daysList, activeIndex - 1);
+                  },
+                  icon: const Icon(Icons.arrow_back_ios, size: 14),
+                  label: const Text("Prev"),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[800], foregroundColor: Colors.white),
+                )
+              else
+                 const SizedBox(width: 10),
+
+              Text("${activeIndex + 1} / ${daysList.length}", style: TextStyle(color: isDark ? Colors.grey : Colors.black54)),
+
+              if (hasNext)
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _stop();
+                    _navigateToDay(context, daysList, activeIndex + 1);
+                  },
+                  icon: const Icon(Icons.arrow_forward_ios, size: 14),
+                  label: const Text("Next"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[700], 
+                    foregroundColor: Colors.white,
+                  ).copyWith(
+                    padding: MaterialStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 12))
+                  ),
+                )
+              else 
+                const SizedBox(width: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ... (Other helper methods _buildMainContent, etc. need to be kept from previous file) ...
+  
   // --- MAIN CONTENT BODY ---
   Widget _buildMainContent(
       WidgetRef ref, 
@@ -252,9 +525,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       String? coverImage, 
       bool isDark) {
     
-    // We watch the content here
     final asyncDayContent = ref.watch(specificDayContentProvider(widget.lessonIndex));
-    // We watch the text size here so only this part rebuilds
     final textSize = ref.watch(textSizeProvider);
 
     return asyncDayContent.when(
@@ -266,8 +537,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final htmlTextColor = isDark ? const Color(0xFFE0E0E0) : const Color(0xFF2C3E50);
 
         return SingleChildScrollView(
-          // ✅ ATTACHED SCROLL CONTROLLER
           controller: _scrollController,
+          // ✅ ADD PADDING FOR AUDIO PLAYER
+          padding: _showAudioPlayer 
+              ? const EdgeInsets.only(bottom: 140) 
+              : EdgeInsets.zero,
           child: Column(
             children: [
               _buildHeaderImage(activeDay.title, coverImage),
@@ -297,7 +571,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                             HtmlWidget(
                               studyContent.isEmpty ? "<p>No content available.</p>" : studyContent,
                               textStyle: TextStyle(
-                                fontSize: textSize, // DYNAMIC TEXT SIZE
+                                fontSize: textSize,
                                 height: 1.7,
                                 fontFamily: 'Georgia',
                                 color: htmlTextColor,
@@ -355,7 +629,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        // ✅ FIXED: Wrapped in Consumer to listen to state changes inside modal
         return Consumer(
           builder: (context, ref, _) {
             final currentSize = ref.watch(textSizeProvider);
@@ -380,7 +653,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                           divisions: 8,
                           label: currentSize.toStringAsFixed(1),
                           onChanged: (val) {
-                            // This updates the provider, triggering the Consumer to rebuild
                             ref.read(textSizeProvider.notifier).state = val;
                           },
                         ),
@@ -563,56 +835,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // --- BOTTOM NAV ---
-  Widget _buildBottomNavigation(BuildContext context, List<reader.Day> daysList, int activeIndex, bool isDark) {
-    final hasPrev = activeIndex > 0;
-    final hasNext = activeIndex < daysList.length - 1;
-    final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: bgColor,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -5))],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Opacity(
-                opacity: hasPrev ? 1.0 : 0.0,
-                child: ElevatedButton.icon(
-                  onPressed: hasPrev ? () => _navigateToDay(context, daysList, activeIndex - 1) : null,
-                  icon: const Icon(Icons.arrow_back_ios, size: 14),
-                  label: const Text("Prev"),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[800], foregroundColor: Colors.white),
-                ),
-              ),
-              
-              Text("${activeIndex + 1} / ${daysList.length}", style: TextStyle(color: isDark ? Colors.grey : Colors.black54)),
-
-              Opacity(
-                opacity: hasNext ? 1.0 : 0.0,
-                child: ElevatedButton.icon(
-                  onPressed: hasNext ? () => _navigateToDay(context, daysList, activeIndex + 1) : null,
-                  icon: const Icon(Icons.arrow_forward_ios, size: 14),
-                  label: const Text("Next"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[700], 
-                    foregroundColor: Colors.white,
-                  ).copyWith(
-                    padding: MaterialStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 12))
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

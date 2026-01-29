@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Required for SystemUiOverlayStyle
+import 'package:flutter/services.dart'; 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_tts/flutter_tts.dart'; // ✅ NEW IMPORT
 import '../providers/devotional_provider.dart';
 
-// --- MODEL FOR HIGHLIGHTS ---
+// --- MODEL FOR HIGHLIGHTS (Unchanged) ---
 class DevotionalHighlight {
   final String bookId;
   final int month;
@@ -80,16 +81,20 @@ class _DevotionalReaderScreenState
   bool _isInit = true;
   double _readingProgress = 0.0;
   
-  // ✅ 1. FONT SIZE STATE
   double _fontSize = 18.0;
 
-  // Search Scrolling
   final GlobalKey _highlightKey = GlobalKey();
 
-  // Highlighting State
   List<DevotionalHighlight> _userHighlights = [];
   TextSelection? _currentSelection;
   int? _focusedParagraphIndex; 
+
+  // ✅ AUDIO PLAYER VARIABLES
+  final FlutterTts flutterTts = FlutterTts();
+  bool _isSpeaking = false;
+  bool _isPaused = false;
+  double _speechRate = 0.5;
+  bool _showAudioPlayer = false;
 
   @override
   void initState() {
@@ -97,6 +102,99 @@ class _DevotionalReaderScreenState
     _currentDay = widget.initialDay;
     _loadUserHighlights();
     _saveReadingProgress(widget.initialDay);
+    _initTts(); // ✅ Init Audio
+  }
+
+  @override
+  void dispose() {
+    flutterTts.stop(); // ✅ Stop audio on exit
+    super.dispose();
+  }
+
+  // ✅ INITIALIZE TTS ENGINE
+  Future<void> _initTts() async {
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setSpeechRate(_speechRate);
+
+    flutterTts.setStartHandler(() {
+      setState(() {
+        _isSpeaking = true;
+        _isPaused = false;
+      });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+      });
+    });
+
+    flutterTts.setErrorHandler((msg) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+      });
+    });
+  }
+
+  // ✅ AUDIO LOGIC
+  Future<void> _speak() async {
+    // 1. Get current data
+    final asyncData = ref.read(devotionalContentProvider(widget.bookId));
+    if (asyncData.value == null) return;
+
+    final allReadings = asyncData.value!;
+    final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
+    
+    // Find current day's reading
+    final reading = monthReadings.firstWhere(
+      (r) => r.day == _currentDay,
+      orElse: () => monthReadings.first,
+    );
+
+    // 2. Prepare Text
+    List<String> cleanParas = _reflowText(reading.content);
+    String bodyText = cleanParas.join(". "); // Join paragraphs with pause
+    
+    String fullText = "${reading.title}. ${reading.verse}. ${reading.verseRef}. $bodyText";
+
+    setState(() {
+      _isSpeaking = true;
+      _isPaused = false;
+      _showAudioPlayer = true;
+    });
+
+    await flutterTts.speak(fullText);
+  }
+
+  Future<void> _stop() async {
+    await flutterTts.stop();
+    setState(() {
+      _isSpeaking = false;
+      _isPaused = false;
+      _showAudioPlayer = false;
+    });
+  }
+
+  Future<void> _pause() async {
+    await flutterTts.pause();
+    setState(() {
+      _isSpeaking = false;
+      _isPaused = true;
+    });
+  }
+
+  void _changeSpeed(double newRate) {
+    setState(() {
+      _speechRate = newRate;
+    });
+    flutterTts.setSpeechRate(newRate);
+    if (_isSpeaking) {
+      _stop();
+      _speak(); 
+    }
   }
 
   // --- PERSISTENCE METHODS ---
@@ -122,22 +220,16 @@ class _DevotionalReaderScreenState
     }
   }
 
-  Future<void> _addHighlight(
-    int paragraphIndex,
-    TextSelection selection,
-    String colorHex,
-  ) async {
+  Future<void> _addHighlight(int paragraphIndex, TextSelection selection, String colorHex) async {
     if (!selection.isValid || selection.isCollapsed) return;
 
-    _userHighlights.removeWhere(
-      (h) =>
-          h.bookId == widget.bookId &&
-          h.month == widget.monthIndex &&
-          h.day == _currentDay &&
-          h.paragraphIndex == paragraphIndex &&
-          h.startOffset < selection.end &&
-          h.endOffset > selection.start,
-    );
+    _userHighlights.removeWhere((h) =>
+        h.bookId == widget.bookId &&
+        h.month == widget.monthIndex &&
+        h.day == _currentDay &&
+        h.paragraphIndex == paragraphIndex &&
+        h.startOffset < selection.end &&
+        h.endOffset > selection.start);
 
     final newHighlight = DevotionalHighlight(
       bookId: widget.bookId,
@@ -159,35 +251,27 @@ class _DevotionalReaderScreenState
 
   Future<void> _clearHighlightsForParagraph(int paragraphIndex) async {
     setState(() {
-      _userHighlights.removeWhere(
-        (h) =>
-            h.bookId == widget.bookId &&
-            h.month == widget.monthIndex &&
-            h.day == _currentDay &&
-            h.paragraphIndex == paragraphIndex,
-      );
+      _userHighlights.removeWhere((h) =>
+          h.bookId == widget.bookId &&
+          h.month == widget.monthIndex &&
+          h.day == _currentDay &&
+          h.paragraphIndex == paragraphIndex);
     });
     _saveHighlightsToPrefs();
   }
 
   Future<void> _saveHighlightsToPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    final String jsonString = json.encode(
-      _userHighlights.map((h) => h.toJson()).toList(),
-    );
+    final String jsonString = json.encode(_userHighlights.map((h) => h.toJson()).toList());
     await prefs.setString('highlights_${widget.bookId}', jsonString);
   }
 
-  // --- ✅ 2. DISPLAY SETTINGS MODAL (With Moving Slider) ---
   void _showDisplaySettings() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
-        // StatefulBuilder allows the slider to update its own state inside the modal
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             return Container(
@@ -196,10 +280,7 @@ class _DevotionalReaderScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    "Display Settings", 
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
-                  ),
+                  const Text("Display Settings", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 30),
                   Row(
                     children: [
@@ -212,9 +293,7 @@ class _DevotionalReaderScreenState
                           divisions: 9,
                           label: _fontSize.round().toString(),
                           onChanged: (val) {
-                            // 1. Update the slider position immediately
                             setModalState(() => _fontSize = val);
-                            // 2. Update the main screen text size
                             setState(() => _fontSize = val);
                           },
                         ),
@@ -223,18 +302,73 @@ class _DevotionalReaderScreenState
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Center(
-                    child: Text(
-                      "Font Size: ${_fontSize.toInt()}",
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ),
+                  Center(child: Text("Font Size: ${_fontSize.toInt()}", style: const TextStyle(color: Colors.grey))),
                 ],
               ),
             );
           },
         );
       },
+    );
+  }
+
+  // ✅ BUILD AUDIO CONTROL PANEL (Bottom Sheet)
+  Widget _buildAudioControlPanel(bool isDark) {
+    if (!_showAudioPlayer) return const SizedBox.shrink();
+
+    final bgColor = isDark ? Colors.grey[900] : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, -2))],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "Reading Day $_currentDay",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textColor),
+              ),
+              IconButton(icon: const Icon(Icons.close, size: 20), onPressed: _stop),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              DropdownButton<double>(
+                value: _speechRate,
+                underline: Container(),
+                icon: const Icon(Icons.speed, size: 18),
+                items: [0.3, 0.5, 0.75, 1.0].map((rate) => DropdownMenuItem(value: rate, child: Text("${(rate * 2).toStringAsFixed(1)}x"))).toList(),
+                onChanged: (val) { if (val != null) _changeSpeed(val); },
+              ),
+              const SizedBox(width: 20),
+              IconButton(icon: const Icon(Icons.replay), onPressed: () { _stop(); _speak(); }),
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: Theme.of(context).primaryColor,
+                child: IconButton(
+                  icon: Icon(_isSpeaking && !_isPaused ? Icons.pause : Icons.play_arrow),
+                  color: Colors.white,
+                  onPressed: () {
+                    if (_isSpeaking && !_isPaused) _pause();
+                    else _speak();
+                  },
+                ),
+              ),
+              const SizedBox(width: 20),
+              IconButton(icon: const Icon(Icons.stop), color: Colors.red, onPressed: _stop),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -255,14 +389,8 @@ class _DevotionalReaderScreenState
       appBar: AppBar(
         title: Column(
           children: [
-            Text(
-              widget.monthName.toUpperCase(),
-              style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: isDark ? Colors.grey : Colors.grey[700]),
-            ),
-            Text(
-              "Day $_currentDay",
-              style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
-            ),
+            Text(widget.monthName.toUpperCase(), style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: isDark ? Colors.grey : Colors.grey[700])),
+            Text("Day $_currentDay", style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: bgColor,
@@ -270,52 +398,48 @@ class _DevotionalReaderScreenState
         centerTitle: true,
         iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black),
         actions: [
-          // ✅ 3. FONT SIZE ICON
+          // ✅ HEADPHONE ICON
           IconButton(
-            icon: const Icon(Icons.format_size),
-            tooltip: "Adjust Text Size",
-            onPressed: _showDisplaySettings,
+            icon: const Icon(Icons.headphones),
+            tooltip: "Listen",
+            onPressed: () {
+              if (_isSpeaking) _stop();
+              else _speak();
+            },
           ),
+          IconButton(icon: const Icon(Icons.format_size), tooltip: "Adjust Text Size", onPressed: _showDisplaySettings),
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () {
               asyncData.whenData((allReadings) {
-                final monthReadings = allReadings
-                    .where((r) => r.month == widget.monthIndex)
-                    .toList();
+                final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
                 monthReadings.sort((a, b) => a.day.compareTo(b.day));
-                final currentReading = monthReadings.firstWhere(
-                  (r) => r.day == _currentDay,
-                  orElse: () => monthReadings[0],
-                );
+                final currentReading = monthReadings.firstWhere((r) => r.day == _currentDay, orElse: () => monthReadings[0]);
                 _shareContent(currentReading, widget.bookTitle);
               });
             },
           ),
         ],
       ),
+      // ✅ BOTTOM SHEET FOR AUDIO
+      bottomSheet: _showAudioPlayer ? _buildAudioControlPanel(isDark) : null,
+      
       body: asyncData.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, stack) => Center(child: Text('Error: $err')),
         data: (allReadings) {
-          final monthReadings = allReadings
-              .where((r) => r.month == widget.monthIndex)
-              .toList();
+          final monthReadings = allReadings.where((r) => r.month == widget.monthIndex).toList();
           monthReadings.sort((a, b) => a.day.compareTo(b.day));
 
-          if (monthReadings.isEmpty)
-            return const Center(child: Text("No content."));
+          if (monthReadings.isEmpty) return const Center(child: Text("No content."));
 
           if (_isInit) {
-            int initialIndex = monthReadings.indexWhere(
-              (r) => r.day == widget.initialDay,
-            );
+            int initialIndex = monthReadings.indexWhere((r) => r.day == widget.initialDay);
             if (initialIndex == -1) initialIndex = 0;
             _pageController = PageController(initialPage: initialIndex);
             _isInit = false;
           }
 
-          // ✅ STACK FOR PROGRESS BAR OVERLAY
           return Stack(
             children: [
               PageView.builder(
@@ -329,6 +453,8 @@ class _DevotionalReaderScreenState
                       _currentSelection = null;
                       _readingProgress = 0.0;
                     });
+                    // ✅ Stop audio when swiping to new day
+                    if (_isSpeaking || _isPaused) _stop();
                     _saveReadingProgress(_currentDay);
                   }
                 },
@@ -336,51 +462,33 @@ class _DevotionalReaderScreenState
                   final reading = monthReadings[index];
                   final List<String> cleanParagraphs = _reflowText(reading.content);
 
-                  // ✅ SCROLL LISTENER
                   return NotificationListener<ScrollNotification>(
                     onNotification: (ScrollNotification notification) {
                       if (notification.metrics.axis == Axis.vertical) {
                          final metrics = notification.metrics;
-                         final progress = metrics.maxScrollExtent == 0
-                             ? 1.0
-                             : metrics.pixels / metrics.maxScrollExtent;
-                         
+                         final progress = metrics.maxScrollExtent == 0 ? 1.0 : metrics.pixels / metrics.maxScrollExtent;
                          if ((progress - _readingProgress).abs() > 0.01) {
                            Future.microtask(() {
-                             if (mounted) {
-                               setState(() {
-                                 _readingProgress = progress.clamp(0.0, 1.0);
-                               });
-                             }
+                             if (mounted) setState(() => _readingProgress = progress.clamp(0.0, 1.0));
                            });
                          }
                       }
                       return false;
                     },
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 10,
-                      ),
+                      // ✅ Padding adjusted for bottom audio player
+                      padding: _showAudioPlayer 
+                          ? const EdgeInsets.fromLTRB(20, 10, 20, 130) 
+                          : const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                       child: Column(
                         children: [
-                          // --- TITLE ---
                           SelectableText(
                             reading.title,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: _fontSize + 6, // Scales with slider
-                              fontWeight: FontWeight.bold,
-                              color: isDark
-                                  ? Colors.tealAccent
-                                  : const Color(0xFF7D2D3B),
-                              fontFamily: 'Georgia',
-                              height: 1.3,
-                            ),
+                            style: TextStyle(fontSize: _fontSize + 6, fontWeight: FontWeight.bold, color: isDark ? Colors.tealAccent : const Color(0xFF7D2D3B), fontFamily: 'Georgia', height: 1.3),
                           ),
                           const SizedBox(height: 24),
 
-                          // --- VERSE BOX ---
                           if (reading.verse.isNotEmpty)
                             Stack(
                               children: [
@@ -390,67 +498,29 @@ class _DevotionalReaderScreenState
                                   decoration: BoxDecoration(
                                     color: isDark ? Colors.grey[850] : const Color(0xFFF9F9F9),
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: isDark ? Colors.teal.withOpacity(0.3) : Colors.grey.shade300
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
-                                    ]
+                                    border: Border.all(color: isDark ? Colors.teal.withOpacity(0.3) : Colors.grey.shade300),
+                                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))]
                                   ),
                                   child: Column(
                                     children: [
-                                      SelectableText(
-                                        reading.verse,
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontStyle: FontStyle.italic,
-                                          fontSize: _fontSize, // Scales
-                                          color: verseColor,
-                                          height: 1.6,
-                                          fontFamily: 'Georgia',
-                                        ),
-                                      ),
+                                      SelectableText(reading.verse, textAlign: TextAlign.center, style: TextStyle(fontStyle: FontStyle.italic, fontSize: _fontSize, color: verseColor, height: 1.6, fontFamily: 'Georgia')),
                                       const SizedBox(height: 15),
-                                      Text(
-                                        "- ${reading.verseRef}",
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: _fontSize - 2, // Scales
-                                          color: isDark
-                                              ? Colors.teal[200]
-                                              : Colors.teal[800],
-                                        ),
-                                      ),
+                                      Text("- ${reading.verseRef}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: _fontSize - 2, color: isDark ? Colors.teal[200] : Colors.teal[800])),
                                     ],
                                   ),
                                 ),
-                                Positioned(
-                                  top: 10, left: 10,
-                                  child: Icon(Icons.format_quote, color: Colors.grey.withOpacity(0.2), size: 40),
-                                ),
+                                Positioned(top: 10, left: 10, child: Icon(Icons.format_quote, color: Colors.grey.withOpacity(0.2), size: 40)),
                               ],
                             ),
 
-                          // --- PARAGRAPHS ---
                           ...List.generate(cleanParagraphs.length, (paraIndex) {
                             final paraText = cleanParagraphs[paraIndex];
-
-                            final bool containsSearch =
-                                widget.searchQuery != null &&
-                                widget.searchQuery!.isNotEmpty &&
-                                paraText.toLowerCase().contains(
-                                  widget.searchQuery!.toLowerCase(),
-                                );
+                            final bool containsSearch = widget.searchQuery != null && widget.searchQuery!.isNotEmpty && paraText.toLowerCase().contains(widget.searchQuery!.toLowerCase());
 
                             if (containsSearch) {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (_highlightKey.currentContext != null) {
-                                  Scrollable.ensureVisible(
-                                    _highlightKey.currentContext!,
-                                    duration: const Duration(milliseconds: 600),
-                                    curve: Curves.easeInOut,
-                                    alignment: 0.3,
-                                  );
+                                  Scrollable.ensureVisible(_highlightKey.currentContext!, duration: const Duration(milliseconds: 600), curve: Curves.easeInOut, alignment: 0.3);
                                 }
                               });
                             }
@@ -460,51 +530,20 @@ class _DevotionalReaderScreenState
                               child: Container(
                                 key: containsSearch ? _highlightKey : null,
                                 child: SelectableText.rich(
-                                  TextSpan(
-                                    children: _buildRichText(
-                                      paraText,
-                                      widget.searchQuery,
-                                      paraIndex,
-                                      textColor,
-                                      isDark,
-                                    ),
-                                  ),
+                                  TextSpan(children: _buildRichText(paraText, widget.searchQuery, paraIndex, textColor, isDark)),
                                   textAlign: TextAlign.justify,
-                                  style: TextStyle(
-                                    fontSize: _fontSize, // ✅ DYNAMIC FONT SIZE
-                                    height: 1.8,
-                                    color: textColor,
-                                    fontFamily: 'Georgia',
-                                  ),
-                                  onSelectionChanged: (selection, cause) {
-                                    _currentSelection = selection;
-                                    _focusedParagraphIndex = paraIndex;
-                                  },
+                                  style: TextStyle(fontSize: _fontSize, height: 1.8, color: textColor, fontFamily: 'Georgia'),
+                                  onSelectionChanged: (selection, cause) { _currentSelection = selection; _focusedParagraphIndex = paraIndex; },
                                   contextMenuBuilder: (context, editableTextState) {
                                     return AdaptiveTextSelectionToolbar(
                                       anchors: editableTextState.contextMenuAnchors,
                                       children: [
-                                        TextSelectionToolbarTextButton(
-                                          padding: const EdgeInsets.all(12.0),
-                                          onPressed: () {
-                                            editableTextState.copySelection(
-                                              SelectionChangedCause.toolbar,
-                                            );
-                                          },
-                                          child: const Icon(Icons.copy, size: 20),
-                                        ),
+                                        TextSelectionToolbarTextButton(padding: const EdgeInsets.all(12.0), onPressed: () => editableTextState.copySelection(SelectionChangedCause.toolbar), child: const Icon(Icons.copy, size: 20)),
                                         _buildColorButton(paraIndex, "0xFF81C784", Colors.green, editableTextState),
                                         _buildColorButton(paraIndex, "0xFFFFF59D", Colors.yellow, editableTextState),
                                         _buildColorButton(paraIndex, "0xFF64B5F6", Colors.blue, editableTextState),
                                         _buildColorButton(paraIndex, "0xFFF06292", Colors.pink, editableTextState),
-                                        TextSelectionToolbarTextButton(
-                                          padding: const EdgeInsets.all(12.0),
-                                          onPressed: () {
-                                            _clearHighlightsForParagraph(paraIndex);
-                                            editableTextState.hideToolbar();
-                                          },
-                                          child: const Icon(Icons.format_clear, size: 20, color: Colors.red),
-                                        ),
+                                        TextSelectionToolbarTextButton(padding: const EdgeInsets.all(12.0), onPressed: () { _clearHighlightsForParagraph(paraIndex); editableTextState.hideToolbar(); }, child: const Icon(Icons.format_clear, size: 20, color: Colors.red)),
                                       ],
                                     );
                                   },
@@ -516,10 +555,7 @@ class _DevotionalReaderScreenState
                           const SizedBox(height: 20),
                           Divider(color: Colors.grey.withOpacity(0.3)),
                           const SizedBox(height: 20),
-
-                          // ✅ 4. BOTTOM NAVIGATION
                           _buildBottomNavigation(context, index, monthReadings.length),
-
                           const SizedBox(height: 50),
                         ],
                       ),
@@ -528,27 +564,18 @@ class _DevotionalReaderScreenState
                 },
               ),
 
-              // ✅ VERTICAL PROGRESS BAR
               Positioned(
                 right: 2, top: 0, bottom: 0,
                 child: Container(
                   width: 6,
                   margin: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.grey[800] : Colors.grey[300], 
-                    borderRadius: BorderRadius.circular(3),
-                  ),
+                  decoration: BoxDecoration(color: isDark ? Colors.grey[800] : Colors.grey[300], borderRadius: BorderRadius.circular(3)),
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: FractionallySizedBox(
                       heightFactor: _readingProgress == 0 ? 0.02 : _readingProgress, 
                       widthFactor: 1.0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary, 
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                      ),
+                      child: Container(decoration: BoxDecoration(color: colorScheme.primary, borderRadius: BorderRadius.circular(3))),
                     ),
                   ),
                 ),
@@ -561,214 +588,82 @@ class _DevotionalReaderScreenState
   }
 
   // --- WIDGET HELPERS ---
-
   Widget _buildBottomNavigation(BuildContext context, int index, int totalLength) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         if (index > 0)
-          OutlinedButton.icon(
-            onPressed: () {
-              _pageController?.previousPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-            },
-            icon: const Icon(Icons.arrow_back_ios, size: 16),
-            label: const Text("Previous"),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-            ),
-          )
-        else
-          const SizedBox(width: 10),
-
+          OutlinedButton.icon(onPressed: () => _pageController?.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut), icon: const Icon(Icons.arrow_back_ios, size: 16), label: const Text("Previous"), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))))
+        else const SizedBox(width: 10),
         if (index < totalLength - 1)
-          ElevatedButton.icon(
-            onPressed: () {
-              _pageController?.nextPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-            },
-            icon: const Text("Next"), 
-            label: const Icon(Icons.arrow_forward_ios, size: 16),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-            ),
-          ),
+          ElevatedButton.icon(onPressed: () => _pageController?.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut), icon: const Text("Next"), label: const Icon(Icons.arrow_forward_ios, size: 16), style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)))),
       ],
     );
   }
 
-  Widget _buildColorButton(
-    int index,
-    String hex,
-    Color color,
-    EditableTextState state,
-  ) {
+  Widget _buildColorButton(int index, String hex, Color color, EditableTextState state) {
     return InkWell(
-      onTap: () {
-        if (_currentSelection != null && _focusedParagraphIndex == index) {
-          _addHighlight(index, _currentSelection!, hex);
-          state.hideToolbar();
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8),
-        width: 24,
-        height: 24,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.grey.shade300, width: 1),
-        ),
-      ),
+      onTap: () { if (_currentSelection != null && _focusedParagraphIndex == index) { _addHighlight(index, _currentSelection!, hex); state.hideToolbar(); } },
+      child: Container(margin: const EdgeInsets.symmetric(horizontal: 8), width: 24, height: 24, decoration: BoxDecoration(color: color, shape: BoxShape.circle, border: Border.all(color: Colors.grey.shade300, width: 1))),
     );
   }
 
   // --- TEXT PROCESSING HELPERS ---
-
-  List<TextSpan> _buildRichText(
-    String text,
-    String? query,
-    int paraIndex,
-    Color? baseColor,
-    bool isDark,
-  ) {
-    List<Map<String, dynamic>> charStyles = List.generate(
-      text.length,
-      (index) => {'bgColor': null},
-    );
-
-    final myHighlights = _userHighlights.where(
-      (h) =>
-          h.bookId == widget.bookId &&
-          h.month == widget.monthIndex &&
-          h.day == _currentDay &&
-          h.paragraphIndex == paraIndex,
-    );
+  List<TextSpan> _buildRichText(String text, String? query, int paraIndex, Color? baseColor, bool isDark) {
+    List<Map<String, dynamic>> charStyles = List.generate(text.length, (index) => {'bgColor': null});
+    final myHighlights = _userHighlights.where((h) => h.bookId == widget.bookId && h.month == widget.monthIndex && h.day == _currentDay && h.paragraphIndex == paraIndex);
 
     for (var h in myHighlights) {
       int safeStart = h.startOffset.clamp(0, text.length);
       int safeEnd = h.endOffset.clamp(0, text.length);
-      for (int i = safeStart; i < safeEnd; i++) {
-        charStyles[i]['bgColor'] = Color(int.parse(h.colorHex));
-      }
+      for (int i = safeStart; i < safeEnd; i++) { charStyles[i]['bgColor'] = Color(int.parse(h.colorHex)); }
     }
 
     if (query != null && query.isNotEmpty) {
-      String lowerText = text.toLowerCase();
-      String lowerQuery = query.toLowerCase();
-      int matchIndex = lowerText.indexOf(lowerQuery);
+      String lowerText = text.toLowerCase(); String lowerQuery = query.toLowerCase(); int matchIndex = lowerText.indexOf(lowerQuery);
       while (matchIndex != -1) {
-        for (
-          int i = matchIndex;
-          i < matchIndex + lowerQuery.length && i < text.length;
-          i++
-        ) {
-          charStyles[i]['bgColor'] = isDark
-              ? Colors.tealAccent.withOpacity(0.5)
-              : Colors.yellow;
-        }
-        matchIndex = lowerText.indexOf(
-          lowerQuery,
-          matchIndex + lowerQuery.length,
-        );
+        for (int i = matchIndex; i < matchIndex + lowerQuery.length && i < text.length; i++) { charStyles[i]['bgColor'] = isDark ? Colors.tealAccent.withOpacity(0.5) : Colors.yellow; }
+        matchIndex = lowerText.indexOf(lowerQuery, matchIndex + lowerQuery.length);
       }
     }
 
-    List<TextSpan> spans = [];
-    if (text.isEmpty) return spans;
-
-    int currentStart = 0;
-    var currentStyle = charStyles[0];
+    List<TextSpan> spans = []; if (text.isEmpty) return spans;
+    int currentStart = 0; var currentStyle = charStyles[0];
 
     for (int i = 1; i < text.length; i++) {
       var style = charStyles[i];
       if (style['bgColor'] != currentStyle['bgColor']) {
-        spans.add(
-          TextSpan(
-            text: text.substring(currentStart, i),
-            style: TextStyle(
-              color: baseColor,
-              backgroundColor: currentStyle['bgColor'] as Color?,
-            ),
-          ),
-        );
-        currentStart = i;
-        currentStyle = style;
+        spans.add(TextSpan(text: text.substring(currentStart, i), style: TextStyle(color: baseColor, backgroundColor: currentStyle['bgColor'] as Color?)));
+        currentStart = i; currentStyle = style;
       }
     }
-    spans.add(
-      TextSpan(
-        text: text.substring(currentStart),
-        style: TextStyle(
-          color: baseColor,
-          backgroundColor: currentStyle['bgColor'] as Color?,
-        ),
-      ),
-    );
-
+    spans.add(TextSpan(text: text.substring(currentStart), style: TextStyle(color: baseColor, backgroundColor: currentStyle['bgColor'] as Color?)));
     return spans;
   }
 
   List<String> _reflowText(String rawContent) {
     String cleanContent = rawContent
-        .replaceAll(RegExp(r'\[\d+\]'), '')
-        .replaceAll(RegExp(r'\(\d+\)'), '')
-        .replaceAllMapped(RegExp(r'(?<=[a-zA-Z])(?=\d)'), (match) => ' ')
-        .replaceAllMapped(RegExp(r'(?<=\d)(?=[a-zA-Z])'), (match) => ' ')
-        .replaceAllMapped(RegExp(r'(?<=[.!?])(?=[A-Z])'), (match) => ' ')
-        .replaceAllMapped(RegExp(r'(?<=[a-z])(?=[A-Z])'), (match) => ' ')
+        .replaceAll(RegExp(r'\[\d+\]'), '').replaceAll(RegExp(r'\(\d+\)'), '')
+        .replaceAllMapped(RegExp(r'(?<=[a-zA-Z])(?=\d)'), (match) => ' ').replaceAllMapped(RegExp(r'(?<=\d)(?=[a-zA-Z])'), (match) => ' ')
+        .replaceAllMapped(RegExp(r'(?<=[.!?])(?=[A-Z])'), (match) => ' ').replaceAllMapped(RegExp(r'(?<=[a-z])(?=[A-Z])'), (match) => ' ')
         .replaceAll(RegExp(r'\s+'), ' ');
 
-    List<String> finalParagraphs = [];
-    StringBuffer currentBuffer = StringBuffer();
-    int sentenceCount = 0;
-
-    RegExp sentenceSplit = RegExp(r'(?<=[.!?])\s+');
-    List<String> allSentences = cleanContent.split(sentenceSplit);
+    List<String> finalParagraphs = []; StringBuffer currentBuffer = StringBuffer(); int sentenceCount = 0;
+    RegExp sentenceSplit = RegExp(r'(?<=[.!?])\s+'); List<String> allSentences = cleanContent.split(sentenceSplit);
 
     for (String sentence in allSentences) {
-      String s = sentence.trim();
-      if (s.isEmpty) continue;
-
-      currentBuffer.write(s);
-      currentBuffer.write(" ");
-      sentenceCount++;
-
-      if (sentenceCount >= 4) {
-        finalParagraphs.add(currentBuffer.toString().trim());
-        currentBuffer.clear();
-        sentenceCount = 0;
-      }
+      String s = sentence.trim(); if (s.isEmpty) continue;
+      currentBuffer.write(s); currentBuffer.write(" "); sentenceCount++;
+      if (sentenceCount >= 4) { finalParagraphs.add(currentBuffer.toString().trim()); currentBuffer.clear(); sentenceCount = 0; }
     }
-
-    if (currentBuffer.isNotEmpty) {
-      finalParagraphs.add(currentBuffer.toString().trim());
-    }
-
+    if (currentBuffer.isNotEmpty) finalParagraphs.add(currentBuffer.toString().trim());
     return finalParagraphs;
   }
 
-  void _shareContent(dynamic reading, String bookTitle) { // Updated type to dynamic to handle provider model
+  void _shareContent(dynamic reading, String bookTitle) { 
     List<String> cleanParas = _reflowText(reading.content);
     String formattedContent = cleanParas.join("\n\n");
-    final String textToShare =
-        """
-*${reading.title}*
-${widget.monthName} ${reading.day} | $bookTitle
-
-"${reading.verse}" 
-- ${reading.verseRef}
-
-$formattedContent
-
-_Sent from Advent Study Hub_
-""";
+    final String textToShare = "*${reading.title}*\n${widget.monthName} ${reading.day} | $bookTitle\n\n\"${reading.verse}\"\n- ${reading.verseRef}\n\n$formattedContent\n\n_Sent from Advent Study Hub_";
     Share.share(textToShare);
   }
 }

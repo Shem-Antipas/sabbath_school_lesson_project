@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_tts/flutter_tts.dart'; 
 import '../models/book_meta.dart';
 
-// --- DATA MODELS ---
+// --- DATA MODELS (Unchanged) ---
 enum ItemType { header, content, navigation }
 
 class BookItem {
@@ -110,6 +111,16 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   final ItemScrollController _itemScrollController = ItemScrollController();
   final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
 
+  // ✅ AUDIO PLAYER VARIABLES
+  final FlutterTts flutterTts = FlutterTts();
+  bool _isSpeaking = false;
+  bool _isPaused = false;
+  double _speechRate = 0.5; 
+  bool _showAudioPlayer = false;
+  
+  // ✅ CACHED TEXT
+  String _cachedAudioText = "";
+
   @override
   void initState() {
     super.initState();
@@ -122,13 +133,128 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
 
     _loadBookData();
     _loadUserHighlights();
+    _initTts(); 
     _itemPositionsListener.itemPositions.addListener(_onScrollUpdate);
+  }
+
+  // ✅ INITIALIZE TTS ENGINE
+  Future<void> _initTts() async {
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setSpeechRate(_speechRate);
+
+    // iOS Audio Config
+    await flutterTts.setIosAudioCategory(IosTextToSpeechAudioCategory.playback,
+        [
+          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+        ],
+        IosTextToSpeechAudioMode.defaultMode
+    );
+
+    flutterTts.setStartHandler(() {
+      if(mounted) setState(() { _isSpeaking = true; _isPaused = false; });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      if(mounted) setState(() { _isSpeaking = false; _isPaused = false; });
+    });
+
+    flutterTts.setErrorHandler((msg) {
+      if(mounted) setState(() { _isSpeaking = false; _isPaused = false; });
+    });
   }
 
   @override
   void dispose() {
     _itemPositionsListener.itemPositions.removeListener(_onScrollUpdate);
+    flutterTts.stop(); 
     super.dispose();
+  }
+
+  // ✅ HELPER: STRIP HTML FOR AUDIO READING
+  String _cleanHtmlForTts(String htmlContent) {
+    String temp = htmlContent
+        .replaceAll(RegExp(r'<br\s*/?>'), '. ') 
+        .replaceAll(RegExp(r'<\/p>'), '. ');    
+    
+    temp = temp.replaceAll(RegExp(r'<[^>]*>'), '');
+    
+    // Fix Entities
+    temp = temp.replaceAll('&nbsp;', ' ')
+               .replaceAll('&amp;', ' and ')
+               .replaceAll('&quot;', '"')
+               .replaceAll('&#8217;', "'")
+               .replaceAll('&#8220;', '"')
+               .replaceAll('&#8221;', '"');
+    return temp;
+  }
+
+  // ✅ 1. PREPARE AUDIO (Headphone Click)
+  // Opens panel, prepares text, DOES NOT PLAY AUTOMATICALLY
+  void _prepareAudioPanel() {
+    if (_showAudioPlayer) {
+      _stop(); // Toggle off if open
+      return;
+    }
+
+    if (_currentChapterIndex >= _allChapters.length) return;
+
+    String title = _allChapters[_currentChapterIndex].title;
+    String content = _cleanHtmlForTts(_allChapters[_currentChapterIndex].content);
+    String fullText = "$title. \n\n $content";
+
+    setState(() {
+      _cachedAudioText = fullText;
+      _showAudioPlayer = true;
+      _isSpeaking = false;
+      _isPaused = false;
+    });
+  }
+
+  // ✅ 2. PLAY/PAUSE TOGGLE (Button Click)
+  Future<void> _togglePlay() async {
+    if (_cachedAudioText.isEmpty) return;
+
+    if (_isSpeaking && !_isPaused) {
+      _pause();
+    } else {
+      // Resume or Start
+      if(mounted) setState(() { _isSpeaking = true; _isPaused = false; });
+      await flutterTts.speak(_cachedAudioText);
+    }
+  }
+
+  Future<void> _stop() async {
+    await flutterTts.stop();
+    if(mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+        _showAudioPlayer = false; // Hide panel on stop
+      });
+    }
+  }
+
+  Future<void> _pause() async {
+    await flutterTts.pause();
+    if(mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = true;
+      });
+    }
+  }
+
+  void _changeSpeed(double newRate) {
+    setState(() => _speechRate = newRate);
+    flutterTts.setSpeechRate(newRate);
+    if (_isSpeaking) {
+      // Restart to apply speed change
+      flutterTts.stop();
+      flutterTts.speak(_cachedAudioText);
+    }
   }
 
   void _onScrollUpdate() {
@@ -152,8 +278,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         _chapterProgress = localProgress.clamp(0.0, 1.0);
       });
     }
-    
-    // ✅ SAVING HISTORY AUTOMATICALLY ON SCROLL
     _saveLastReadPosition(currentIndex);
   }
 
@@ -177,7 +301,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   Future<void> _addUserHighlight(int itemIndex, TextSelection selection, String colorHex) async {
     if (!selection.isValid || selection.isCollapsed) return;
     
-    // Remove existing overlaps
     _userHighlights.removeWhere((h) =>
         h.chapterIndex == _currentChapterIndex &&
         h.itemIndex == itemIndex &&
@@ -197,7 +320,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       _currentSelection = null;
     });
 
-    // ✅ SAVE TO PERSISTENT STORAGE
     final prefs = await SharedPreferences.getInstance();
     final String jsonString = json.encode(_userHighlights.map((h) => h.toJson()).toList());
     await prefs.setString('highlights_${widget.bookMeta.id}', jsonString);
@@ -218,7 +340,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     await prefs.setString('highlights_${widget.bookMeta.id}', jsonString);
   }
 
-  // --- PARSING ---
+  // --- PARSING (Unchanged) ---
   Map<String, dynamic> _parseHtmlContent(String rawHtml) {
     String processed = rawHtml
         .replaceAll('<br>', '\n')
@@ -293,6 +415,11 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   }
 
   Future<void> _loadChapterIntoView(int chapterIndex, {bool resetScroll = true}) async {
+    // ✅ STOP AUDIO & HIDE PANEL WHEN CHAPTER CHANGES
+    await _stop();
+    // Double check it's closed
+    if (mounted) setState(() => _showAudioPlayer = false);
+
     setState(() => _isLoading = true);
 
     if (chapterIndex < 0 || chapterIndex >= _allChapters.length) {
@@ -433,7 +560,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     }
   }
 
-  // --- RENDERING TEXT ---
+  // --- RENDERING TEXT (Unchanged) ---
   List<TextSpan> _buildComplexText(BuildContext context, int itemIndex, BookItem item, String? query) {
     final String text = item.text;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -512,12 +639,10 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     return spans;
   }
 
-  // --- UX: FONT SIZE SETTINGS ---
   void _showDisplaySettings() {
     showModalBottomSheet(
       context: context,
       builder: (context) {
-        // ✅ StatefulBuilder ensures slider updates visibly
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
             return Container(
@@ -540,8 +665,8 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                           divisions: 9,
                           label: _fontSize.round().toString(),
                           onChanged: (val) {
-                            setModalState(() => _fontSize = val); // Updates Slider
-                            setState(() => _fontSize = val);      // Updates Text
+                            setModalState(() => _fontSize = val); 
+                            setState(() => _fontSize = val);      
                           }, 
                         ),
                       ),
@@ -558,6 +683,90 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     );
   }
 
+  // ✅ BUILD AUDIO CONTROL PANEL (Fixed Logic)
+  Widget _buildAudioControlPanel(bool isDark) {
+    if (!_showAudioPlayer) return const SizedBox.shrink();
+
+    final bgColor = isDark ? Colors.grey[900] : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, -2))],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  "Playing: ${_allChapters[_currentChapterIndex].title}",
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textColor),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: _stop,
+              ),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Speed Control
+              DropdownButton<double>(
+                value: _speechRate,
+                underline: Container(),
+                icon: const Icon(Icons.speed, size: 18),
+                items: [0.3, 0.5, 0.75, 1.0].map((rate) {
+                  return DropdownMenuItem(
+                    value: rate,
+                    child: Text("${(rate * 2).toStringAsFixed(1)}x"),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) _changeSpeed(val);
+                },
+              ),
+              const SizedBox(width: 20),
+              // Replay
+              IconButton(
+                icon: const Icon(Icons.replay),
+                onPressed: () {
+                  flutterTts.stop(); 
+                  flutterTts.speak(_cachedAudioText);
+                },
+              ),
+              // Play/Pause
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: Theme.of(context).primaryColor,
+                child: IconButton(
+                  icon: Icon(_isSpeaking && !_isPaused ? Icons.pause : Icons.play_arrow),
+                  color: Colors.white,
+                  onPressed: _togglePlay, // ✅ Calls the corrected logic
+                ),
+              ),
+              const SizedBox(width: 20),
+              // Stop
+              IconButton(
+                icon: const Icon(Icons.stop),
+                color: Colors.red,
+                onPressed: _stop,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -570,6 +779,12 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         backgroundColor: appBarColor,
         foregroundColor: Colors.white,
         actions: [
+          // ✅ AUDIO BUTTON (Prepares only)
+          IconButton(
+            icon: const Icon(Icons.headphones),
+            tooltip: "Listen",
+            onPressed: _prepareAudioPanel,
+          ),
           IconButton(
             icon: const Icon(Icons.format_size), 
             tooltip: "Text Size",
@@ -633,11 +848,15 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
           ],
         ),
       ),
+      // ✅ ADDED BOTTOM SHEET FOR AUDIO
+      bottomSheet: _showAudioPlayer ? _buildAudioControlPanel(isDark) : null,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Stack(
               children: [
                 ScrollablePositionedList.builder(
+                  // Add padding at bottom if player is open
+                  padding: _showAudioPlayer ? const EdgeInsets.only(bottom: 120) : EdgeInsets.zero,
                   itemScrollController: _itemScrollController,
                   itemPositionsListener: _itemPositionsListener,
                   itemCount: _currentViewItems.length,
@@ -666,7 +885,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                                 icon: const Icon(Icons.arrow_forward),
                                 label: const Text("Next Chapter"),
                                 style: ElevatedButton.styleFrom(
-                                  // ✅ BRAND BLUE FOR LIGHT MODE, THEME COLOR FOR DARK
                                   backgroundColor: isDark ? colorScheme.primary : const Color(0xFF06275C),
                                   foregroundColor: Colors.white,
                                 ),
@@ -690,30 +908,23 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                           _currentSelection = selection;
                           _focusedItemIndex = index;
                         },
-                        // ✅ CONTEXT MENU WITH COPY & MULTI-COLOR
                         contextMenuBuilder: (context, editableTextState) {
                           return AdaptiveTextSelectionToolbar(
                             anchors: editableTextState.contextMenuAnchors,
                             children: [
-                              // 1. Copy Button
                               TextSelectionToolbarTextButton(
                                 padding: const EdgeInsets.all(12.0),
                                 onPressed: () {
                                   editableTextState.copySelection(SelectionChangedCause.toolbar);
-                                  // Optional: Hide toolbar after copy
                                   editableTextState.hideToolbar();
                                 },
                                 child: const Icon(Icons.copy, size: 20),
                               ),
-                              
-                              // 2. Color Options
-                              _buildColorButton(index, "0xFF81C784", Colors.green.shade300, editableTextState), // Green
-                              _buildColorButton(index, "0xFFFFF59D", Colors.yellow.shade200, editableTextState), // Yellow
-                              _buildColorButton(index, "0xFFFFB74D", Colors.orange.shade300, editableTextState), // Orange
-                              _buildColorButton(index, "0xFFF06292", Colors.pink.shade300, editableTextState),   // Pink
-                              _buildColorButton(index, "0xFF64B5F6", Colors.blue.shade300, editableTextState),   // Royal Blue
-
-                              // 3. Clear Button
+                              _buildColorButton(index, "0xFF81C784", Colors.green.shade300, editableTextState),
+                              _buildColorButton(index, "0xFFFFF59D", Colors.yellow.shade200, editableTextState),
+                              _buildColorButton(index, "0xFFFFB74D", Colors.orange.shade300, editableTextState),
+                              _buildColorButton(index, "0xFFF06292", Colors.pink.shade300, editableTextState),
+                              _buildColorButton(index, "0xFF64B5F6", Colors.blue.shade300, editableTextState),
                               TextSelectionToolbarTextButton(
                                 padding: const EdgeInsets.all(12.0),
                                 onPressed: () {
