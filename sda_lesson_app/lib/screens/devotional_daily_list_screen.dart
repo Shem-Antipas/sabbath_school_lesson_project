@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/devotional_provider.dart';
 import 'devotional_reader_screen.dart';
-import '../utils/local_devotional_search.dart'; // ✅ Imports the Local Search Logic
+import '../utils/local_devotional_search.dart'; 
 
 class DevotionalDailyListScreen extends ConsumerWidget {
   final String bookId;
   final String bookTitle;
+  final String coverImagePath; // ✅ Required variable
   final int monthIndex;
   final String monthName;
 
@@ -14,6 +15,7 @@ class DevotionalDailyListScreen extends ConsumerWidget {
     super.key,
     required this.bookId,
     required this.bookTitle,
+    required this.coverImagePath, // ✅ Required in constructor
     required this.monthIndex,
     required this.monthName,
   });
@@ -33,7 +35,6 @@ class DevotionalDailyListScreen extends ConsumerWidget {
         elevation: 0,
         backgroundColor: bgColor,
         foregroundColor: textColor,
-        // ✅ NEW: Search Button for searching inside this specific book
         actions: [
           asyncData.when(
             data: (allReadings) => IconButton(
@@ -42,14 +43,15 @@ class DevotionalDailyListScreen extends ConsumerWidget {
                 showSearch(
                   context: context,
                   delegate: LocalDevotionalSearchDelegate(
-                    allReadings: allReadings, // Pass data to search logic
+                    allReadings: allReadings,
                     bookId: bookId,
                     bookTitle: bookTitle,
+                    coverImagePath: coverImagePath, // ✅ NOW VALID (See Step 2 below)
                   ),
                 );
               },
             ),
-            loading: () => const SizedBox(), // Hide button while loading
+            loading: () => const SizedBox(),
             error: (_, __) => const SizedBox(),
           ),
         ],
@@ -86,7 +88,6 @@ class DevotionalDailyListScreen extends ConsumerWidget {
                   horizontal: 8,
                   vertical: 4,
                 ),
-                // Day Number Bubble
                 leading: CircleAvatar(
                   backgroundColor: isDark
                       ? Colors.tealAccent.withOpacity(0.2)
@@ -98,7 +99,6 @@ class DevotionalDailyListScreen extends ConsumerWidget {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-                // Title
                 title: Text(
                   reading.title,
                   maxLines: 1,
@@ -109,7 +109,6 @@ class DevotionalDailyListScreen extends ConsumerWidget {
                     fontSize: 16,
                   ),
                 ),
-                // Verse Preview
                 subtitle: Text(
                   reading.verse.isNotEmpty ? reading.verse : "Daily Reading",
                   maxLines: 1,
@@ -124,13 +123,13 @@ class DevotionalDailyListScreen extends ConsumerWidget {
                   color: isDark ? Colors.grey : Colors.black54,
                 ),
                 onTap: () {
-                  // ✅ Navigate to Reader, passing the clicked day
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => DevotionalReaderScreen(
                         bookId: bookId,
                         bookTitle: bookTitle,
+                        coverImagePath: coverImagePath, // ✅ Passed correctly
                         monthIndex: monthIndex,
                         monthName: monthName,
                         initialDay: reading.day,

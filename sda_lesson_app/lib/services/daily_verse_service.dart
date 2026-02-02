@@ -8,9 +8,8 @@ class DailyVerse {
 }
 
 class DailyVerseService {
-  // --- 1. EXPANDED VERSE LIBRARY ---
+  // --- 1. VERSE LIBRARY ---
   static final List<DailyVerse> _allVerses = [
-    // Pentateuch & History
     const DailyVerse(
       text: "Have I not commanded thee? Be strong and of a good courage.",
       reference: "Joshua 1:9",
@@ -28,14 +27,7 @@ class DailyVerseService {
       reference: "Numbers 6:24",
     ),
     const DailyVerse(
-      text: "Have I not commanded thee? Be strong and of a good courage.",
-      reference: "Joshua 1:9",
-    ),
-
-    // Wisdom
-    const DailyVerse(
-      text:
-          "Trust in the Lord with all thine heart; and lean not unto thine own understanding.",
+      text: "Trust in the Lord with all thine heart; and lean not unto thine own understanding.",
       reference: "Proverbs 3:5",
     ),
     const DailyVerse(
@@ -45,116 +37,96 @@ class DailyVerseService {
     const DailyVerse(
       text: "The Lord is my shepherd; I shall not want.",
       reference: "Psalms 23:1",
-    ), // Changed 'Psalm' to 'Psalms' for better matching
+    ),
     const DailyVerse(
-      text:
-          "A friend loveth at all times, and a brother is born for adversity.",
+      text: "A friend loveth at all times, and a brother is born for adversity.",
       reference: "Proverbs 17:17",
     ),
-
-    // Prophets
     const DailyVerse(
       text: "But they that wait upon the Lord shall renew their strength.",
       reference: "Isaiah 40:31",
     ),
     const DailyVerse(
-      text:
-          "For I know the thoughts that I think toward you, saith the Lord, thoughts of peace, and not of evil.",
+      text: "For I know the thoughts that I think toward you, saith the Lord, thoughts of peace, and not of evil.",
       reference: "Jeremiah 29:11",
     ),
     const DailyVerse(
       text: "The Lord is good, a strong hold in the day of trouble.",
       reference: "Nahum 1:7",
     ),
-
-    // Gospels
     const DailyVerse(
       text: "For God so loved the world, that he gave his only begotten Son.",
       reference: "John 3:16",
     ),
     const DailyVerse(
-      text:
-          "Come unto me, all ye that labour and are heavy laden, and I will give you rest.",
+      text: "Come unto me, all ye that labour and are heavy laden, and I will give you rest.",
       reference: "Matthew 11:28",
     ),
     const DailyVerse(
-      text:
-          "I am the way, the truth, and the life: no man cometh unto the Father, but by me.",
+      text: "I am the way, the truth, and the life: no man cometh unto the Father, but by me.",
       reference: "John 14:6",
     ),
-
-    // Epistles
     const DailyVerse(
       text: "I can do all things through Christ which strengtheneth me.",
       reference: "Philippians 4:13",
     ),
     const DailyVerse(
-      text:
-          "And we know that all things work together for good to them that love God.",
+      text: "And we know that all things work together for good to them that love God.",
       reference: "Romans 8:28",
     ),
     const DailyVerse(
-      text:
-          "If we confess our sins, he is faithful and just to forgive us our sins.",
+      text: "If we confess our sins, he is faithful and just to forgive us our sins.",
       reference: "1 John 1:9",
     ),
     const DailyVerse(
-      text:
-          "Be careful for nothing; but in everything by prayer and supplication with thanksgiving let your requests be made known unto God.",
+      text: "Be careful for nothing; but in everything by prayer and supplication with thanksgiving let your requests be made known unto God.",
       reference: "Philippians 4:6",
     ),
     const DailyVerse(
-      text:
-          "For by grace are ye saved through faith; and that not of yourselves: it is the gift of God.",
+      text: "For by grace are ye saved through faith; and that not of yourselves: it is the gift of God.",
       reference: "Ephesians 2:8",
     ),
     const DailyVerse(
       text: "Let the word of Christ dwell in you richly in all wisdom.",
       reference: "Colossians 3:16",
     ),
-
-    // Revelation
     const DailyVerse(
       text: "Behold, I stand at the door, and knock.",
       reference: "Revelation 3:20",
     ),
   ];
 
-  // --- 2. INITIALIZATION LOGIC (Call this in Dashboard initState) ---
-  static Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Get today's date string (YYYY-MM-DD)
-    final String todayString = DateTime.now().toIso8601String().split('T')[0];
-    final String? lastDate = prefs.getString('verse_date');
-
-    // If we haven't set a verse for TODAY yet, advance the index
-    if (lastDate != todayString) {
-      int currentIndex = prefs.getInt('verse_index') ?? 0;
-
-      // Calculate next index (Circle back to 0 if at end of list)
-      int nextIndex = (currentIndex + 1) % _allVerses.length;
-
-      await prefs.setInt('verse_index', nextIndex);
-      await prefs.setString('verse_date', todayString);
-    }
-  }
-
-  // --- 3. GETTER (Async) ---
+  // --- 2. SMART GETTER (Handles Date Checking Logic Here) ---
   static Future<DailyVerse> getTodayVerse() async {
     final prefs = await SharedPreferences.getInstance();
-    int index = prefs.getInt('verse_index') ?? 0;
 
-    // Safety check: if list size changed and index is out of bounds, reset to 0
-    if (index >= _allVerses.length) {
-      index = 0;
-      await prefs.setInt('verse_index', 0);
+    // 1. Get current saved state
+    String? lastDate = prefs.getString('verse_date');
+    int currentIndex = prefs.getInt('verse_index') ?? 0;
+
+    // 2. Get today's actual date
+    final String todayString = DateTime.now().toIso8601String().split('T')[0];
+
+    // 3. Compare: If the saved date is NOT today, update the verse index
+    if (lastDate != todayString) {
+      // Move to the next verse
+      currentIndex = (currentIndex + 1) % _allVerses.length;
+
+      // Save the new state
+      await prefs.setInt('verse_index', currentIndex);
+      await prefs.setString('verse_date', todayString);
     }
 
-    return _allVerses[index];
+    // 4. Safety Check (In case list size shrinks in updates)
+    if (currentIndex >= _allVerses.length) {
+      currentIndex = 0;
+      // Don't save 0 yet, just display it to be safe
+    }
+
+    return _allVerses[currentIndex];
   }
 
-  // --- 4. PLACEHOLDER (For instant UI load before async finishes) ---
+  // --- 3. PLACEHOLDER ---
   static DailyVerse getPlaceholderVerse() {
     return _allVerses[0];
   }

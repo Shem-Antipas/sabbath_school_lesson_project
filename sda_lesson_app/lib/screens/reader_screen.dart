@@ -63,7 +63,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   String _cachedAudioText = "";
   int _currentWordStart = 0;
   int _currentWordEnd = 0;
-  int _totalTextLength = 1; // Default 1 to avoid division by zero
+  int _totalTextLength = 1;
 
   @override
   void initState() {
@@ -117,7 +117,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         });
     });
 
-    // ✅ PROGRESS LISTENER
     flutterTts.setProgressHandler((
       String text,
       int start,
@@ -133,7 +132,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
-  // ✅ CLEAN HTML FOR AUDIO
   String _cleanHtmlForTts(String htmlContent) {
     String temp = htmlContent
         .replaceAll(RegExp(r'<br\s*/?>'), '. ')
@@ -152,10 +150,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     return temp;
   }
 
-  // ✅ 1. PREPARE AUDIO (Headphone Click)
+  // ✅ 1. PREPARE AUDIO
   void _prepareAudioPanel(reader.Day activeDay, String? content) {
     if (_showAudioPlayer) {
-      // Toggle visibility or keep open. Here we close if clicked again.
       setState(() => _showAudioPlayer = false);
       return;
     }
@@ -198,7 +195,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       setState(() {
         _isSpeaking = false;
         _isPaused = false;
-        _showAudioPlayer = false; // Hide panel on stop
+        _showAudioPlayer = false;
         _currentWordStart = 0;
       });
     }
@@ -223,8 +220,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
-  // ✅ 3. SHOW FULL SCREEN PLAYER
-  void _showFullScreenPlayer(reader.Day activeDay, String? coverImage) {
+  // ✅ 3. SHOW FULL SCREEN PLAYER (Updated with Day Switcher)
+  void _showFullScreenPlayer(
+    reader.Day activeDay,
+    String? coverImage,
+    List<reader.Day> allDays,
+    int activeIndex,
+  ) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -232,15 +234,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       builder: (context) => FullScreenLessonPlayer(
         lessonTitle: widget.lessonTitle,
         dayTitle: activeDay.title,
-        coverImage: coverImage,
+        coverImage: coverImage, // ✅ Uses Week's Cover Image
+        daysList: allDays, // ✅ Pass list of days
+        activeIndex: activeIndex, // ✅ Current active day index
         isPlaying: _isSpeaking && !_isPaused,
         currentProgress: (_currentWordStart / _totalTextLength).clamp(0.0, 1.0),
         speechRate: _speechRate,
         onPlayPause: () {
           _togglePlay();
-          // Refresh modal state trick
           Navigator.pop(context);
-          _showFullScreenPlayer(activeDay, coverImage);
+          _showFullScreenPlayer(activeDay, coverImage, allDays, activeIndex);
         },
         onStop: () {
           _stop();
@@ -249,7 +252,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         onChangeSpeed: (val) {
           _changeSpeed(val);
           Navigator.pop(context);
-          _showFullScreenPlayer(activeDay, coverImage);
+          _showFullScreenPlayer(activeDay, coverImage, allDays, activeIndex);
+        },
+        onDaySelected: (index) {
+          // ✅ Switch Day Logic
+          Navigator.pop(context); // Close player
+          _stop(); // Stop audio
+          _navigateToDay(context, allDays, index); // Navigate
         },
         onClose: () => Navigator.pop(context),
       ),
@@ -261,6 +270,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     bool isDark,
     reader.Day activeDay,
     String? coverImage,
+    List<reader.Day> allDays,
+    int activeIndex,
   ) {
     if (!_showAudioPlayer) return const SizedBox.shrink();
 
@@ -268,7 +279,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final textColor = isDark ? Colors.white : Colors.black87;
 
     return GestureDetector(
-      onTap: () => _showFullScreenPlayer(activeDay, coverImage), // Expand
+      onTap: () => _showFullScreenPlayer(
+        activeDay,
+        coverImage,
+        allDays,
+        activeIndex,
+      ), // Expand
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
         decoration: BoxDecoration(
@@ -284,34 +300,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         ),
         child: Row(
           children: [
-            // Cover Thumbnail
-            if (coverImage != null && coverImage.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Image.network(
-                  coverImage,
-                  width: 40,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (c, e, s) => Container(
-                    width: 40,
-                    height: 60,
-                    color: Colors.grey,
-                    child: const Icon(Icons.broken_image, size: 20),
-                  ),
-                ),
-              )
-            else
-              Container(
-                width: 40,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Icon(Icons.music_note, color: Colors.blue),
-              ),
-
+            // Cover Thumbnail (Matches Week's Lesson Cover)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: (coverImage != null && coverImage.isNotEmpty)
+                  ? Image.network(
+                      coverImage,
+                      width: 40,
+                      height: 60,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _fallbackCover(),
+                    )
+                  : _fallbackCover(),
+            ),
             const SizedBox(width: 12),
 
             // Title
@@ -331,7 +332,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     ),
                   ),
                   Text(
-                    "Playing Lesson",
+                    "Reading Lesson",
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -356,6 +357,39 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _fallbackCover() {
+    return Container(
+      width: 40,
+      height: 60,
+      color: Colors.grey,
+      child: const Icon(Icons.music_note, color: Colors.white),
+    );
+  }
+
+  // --- NAVIGATION LOGIC ---
+  void _navigateToDay(
+    BuildContext context,
+    List<reader.Day> daysList,
+    int targetIndex,
+  ) {
+    final reader.Day targetDay = daysList[targetIndex];
+    final List<String> segments = widget.lessonIndex.split('/');
+    segments.removeLast();
+    segments.add(targetDay.id);
+
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => ReaderScreen(
+          lessonIndex: segments.join('/'),
+          lessonTitle: widget.lessonTitle,
+        ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
       ),
     );
   }
@@ -391,13 +425,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final int safeIndex = activeDayIndex != -1 ? activeDayIndex : 0;
         final reader.Day activeDay = daysList[safeIndex];
 
+        // ✅ GET COVER IMAGE (Prioritize Lesson Cover)
         String? coverImage = content.lesson?.cover;
         if (coverImage != null && !coverImage.startsWith('http')) {
           coverImage =
               "https://sabbath-school.adventech.io/api/v1/$parentIndex/cover.png";
         }
 
-        // We fetch data here to access content for audio prep
         final asyncDayContent = ref.watch(
           specificDayContentProvider(widget.lessonIndex),
         );
@@ -426,8 +460,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             asyncDayContent.value?.content,
           ),
 
-          // ✅ MINI PLAYER
-          bottomSheet: _buildMiniPlayer(isDark, activeDay, coverImage),
+          // ✅ MINI PLAYER WITH COVER IMAGE & DATA
+          bottomSheet: _buildMiniPlayer(
+            isDark,
+            activeDay,
+            coverImage,
+            daysList,
+            safeIndex,
+          ),
 
           bottomNavigationBar: _buildBottomNavigation(
             context,
@@ -477,6 +517,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           _buildErrorBody(backgroundColor, "Error loading lesson: $err"),
     );
   }
+
+  // ... (Keep _buildErrorBody, _buildAppBar, _buildMainContent, _showTextSettings,
+  //      _handleDownload, _showBibleVerse, _buildHeaderImage, _buildNavigationMenu
+  //      EXACTLY AS THEY WERE) ...
 
   Widget _buildErrorBody(Color bgColor, String message) {
     return Scaffold(
@@ -532,7 +576,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               ),
             ),
       actions: [
-        // ✅ 1. HEADPHONE ICON
         IconButton(
           icon: const Icon(Icons.headphones, color: Colors.white),
           tooltip: "Listen",
@@ -540,15 +583,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             _prepareAudioPanel(activeDay, contentToRead);
           },
         ),
-
-        // 2. Text Size
         IconButton(
           icon: const Icon(Icons.text_fields, color: Colors.white),
           tooltip: "Adjust Text Size",
           onPressed: () => _showTextSettings(context),
         ),
-
-        // 3. Popup Menu
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert, color: Colors.white),
           onSelected: (value) {
@@ -618,126 +657,121 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   // --- MAIN CONTENT BODY ---
+  // --- MAIN CONTENT BODY ---
   Widget _buildMainContent(
     WidgetRef ref,
     reader.Day activeDay,
     String? coverImage,
-    bool isDark,
-  ) {
-    final asyncDayContent = ref.watch(
-      specificDayContentProvider(widget.lessonIndex),
-    );
+    bool isDark, {
+    String? forcedContent, // Optional parameter for single-page mode
+  }) {
     final textSize = ref.watch(textSizeProvider);
+
+    // This is the internal builder that actually renders the HTML
+    Widget contentBuilder(String content, String date) {
+      final htmlTextColor = isDark ? const Color(0xFFE0E0E0) : const Color(0xFF2C3E50);
+
+      return SingleChildScrollView(
+        controller: _scrollController,
+        // Add padding at the bottom so the content isn't hidden by the Audio Mini Player
+        padding: _showAudioPlayer ? const EdgeInsets.only(bottom: 140) : EdgeInsets.zero,
+        child: Column(
+          children: [
+            // Header Image (The blurred lesson cover)
+            _buildHeaderImage(activeDay.title, coverImage),
+
+            Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 800),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SelectionArea(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (date.isNotEmpty)
+                            Text(
+                              date.toUpperCase(),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: isDark ? Colors.grey[400] : Colors.blueGrey,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          const SizedBox(height: 20),
+                          // The actual lesson text rendered from HTML
+                          HtmlWidget(
+                            content.isEmpty ? "<p>No content available.</p>" : content,
+                            textStyle: TextStyle(
+                              fontSize: textSize,
+                              height: 1.7,
+                              fontFamily: 'Georgia',
+                              color: htmlTextColor,
+                            ),
+                            customStylesBuilder: (element) {
+                              if (element.localName == 'a') {
+                                return {
+                                  'color': isDark ? '#64B5F6' : '#1A73E8',
+                                  'text-decoration': 'none',
+                                  'font-weight': 'bold',
+                                };
+                              }
+                              if (element.localName == 'blockquote') {
+                                return {
+                                  'margin': '10px 0',
+                                  'padding': '10px 15px',
+                                  'background-color': isDark ? '#2C2C2C' : '#F5F5F5',
+                                  'border-left': '4px solid ${isDark ? '#64B5F6' : '#1A73E8'}',
+                                  'font-style': 'italic',
+                                };
+                              }
+                              return null;
+                            },
+                            onTapUrl: (url) async {
+                              if (url.contains('bible')) {
+                                _showBibleVerse(context, url, activeDay, isDark);
+                                return true;
+                              }
+                              final uri = Uri.tryParse(url);
+                              if (uri != null && await canLaunchUrl(uri)) {
+                                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                return true;
+                              }
+                              return false;
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 1. If we are in "Single Page" mode, use the content passed directly
+    if (forcedContent != null) {
+      return contentBuilder(forcedContent, activeDay.date ?? "");
+    }
+
+    // 2. Standard Mode: Use the async provider to load the specific day's content
+    final asyncDayContent = ref.watch(specificDayContentProvider(widget.lessonIndex));
 
     return asyncDayContent.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (err, _) => Center(child: Text("Failed to load content: $err")),
       data: (displayData) {
-        final String studyContent = displayData.content ?? activeDay.content;
-        final String studyDate = displayData.date ?? activeDay.date;
-        final htmlTextColor = isDark
-            ? const Color(0xFFE0E0E0)
-            : const Color(0xFF2C3E50);
+        // Fallback to the title and content already available if displayData is sparse
+        final String effectiveContent = (displayData.content != null && displayData.content!.isNotEmpty)
+            ? displayData.content!
+            : activeDay.content;
 
-        return SingleChildScrollView(
-          controller: _scrollController,
-          // ✅ PADDING FOR AUDIO PLAYER
-          padding: _showAudioPlayer
-              ? const EdgeInsets.only(bottom: 140)
-              : EdgeInsets.zero,
-          child: Column(
-            children: [
-              _buildHeaderImage(activeDay.title, coverImage),
-
-              Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 800),
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SelectionArea(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              studyDate.toUpperCase(),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isDark
-                                    ? Colors.grey[400]
-                                    : Colors.blueGrey,
-                                letterSpacing: 1.2,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-
-                            // HTML RENDERER
-                            HtmlWidget(
-                              studyContent.isEmpty
-                                  ? "<p>No content available.</p>"
-                                  : studyContent,
-                              textStyle: TextStyle(
-                                fontSize: textSize,
-                                height: 1.7,
-                                fontFamily: 'Georgia',
-                                color: htmlTextColor,
-                              ),
-                              customStylesBuilder: (element) {
-                                if (element.localName == 'a') {
-                                  return {
-                                    'color': isDark ? '#64B5F6' : '#1A73E8',
-                                    'text-decoration': 'none',
-                                    'font-weight': 'bold',
-                                    'border-bottom':
-                                        '1px dotted ${isDark ? '#64B5F6' : '#1A73E8'}',
-                                  };
-                                }
-                                if (element.localName == 'blockquote') {
-                                  return {
-                                    'margin': '10px 0',
-                                    'padding': '10px 15px',
-                                    'background-color': isDark
-                                        ? '#2C2C2C'
-                                        : '#F5F5F5',
-                                    'border-left':
-                                        '4px solid ${isDark ? '#64B5F6' : '#1A73E8'}',
-                                    'font-style': 'italic',
-                                  };
-                                }
-                                return null;
-                              },
-                              onTapUrl: (url) async {
-                                if (url.contains('bible')) {
-                                  _showBibleVerse(
-                                    context,
-                                    url,
-                                    activeDay,
-                                    isDark,
-                                  );
-                                  return true;
-                                }
-                                final uri = Uri.tryParse(url);
-                                if (uri != null && await canLaunchUrl(uri)) {
-                                  await launchUrl(
-                                    uri,
-                                    mode: LaunchMode.externalApplication,
-                                  );
-                                  return true;
-                                }
-                                return false;
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
+        return contentBuilder(effectiveContent, displayData.date ?? activeDay.date);
       },
     );
   }
@@ -802,11 +836,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final content = await ref.read(
         specificDayContentProvider(widget.lessonIndex).future,
       );
-
       final directory = await getApplicationDocumentsDirectory();
       final fileName = "${widget.lessonIndex.replaceAll('/', '_')}.json";
       final file = File('${directory.path}/$fileName');
-
       final String jsonString = jsonEncode(content.toJson());
       await file.writeAsString(jsonString);
 
@@ -1121,32 +1153,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       ),
     );
   }
-
-  void _navigateToDay(
-    BuildContext context,
-    List<reader.Day> daysList,
-    int targetIndex,
-  ) {
-    final reader.Day targetDay = daysList[targetIndex];
-    final List<String> segments = widget.lessonIndex.split('/');
-    segments.removeLast();
-    segments.add(targetDay.id);
-
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => ReaderScreen(
-          lessonIndex: segments.join('/'),
-          lessonTitle: widget.lessonTitle,
-        ),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
-    );
-  }
 }
 
-// ✅ NEW FULL SCREEN PLAYER WIDGET
+// ✅ NEW FULL SCREEN PLAYER WIDGET (With Playlist Support)
 class FullScreenLessonPlayer extends StatelessWidget {
   final String lessonTitle;
   final String dayTitle;
@@ -1154,6 +1163,9 @@ class FullScreenLessonPlayer extends StatelessWidget {
   final bool isPlaying;
   final double currentProgress;
   final double speechRate;
+  final List<reader.Day> daysList; // ✅ List of days for playlist
+  final int activeIndex; // ✅ Current day index
+  final Function(int) onDaySelected; // ✅ Callback for playlist click
   final VoidCallback onPlayPause;
   final VoidCallback onStop;
   final Function(double) onChangeSpeed;
@@ -1164,29 +1176,35 @@ class FullScreenLessonPlayer extends StatelessWidget {
     required this.lessonTitle,
     required this.dayTitle,
     required this.coverImage,
+    required this.daysList,
+    required this.activeIndex,
     required this.isPlaying,
     required this.currentProgress,
     required this.speechRate,
     required this.onPlayPause,
     required this.onStop,
     required this.onChangeSpeed,
+    required this.onDaySelected,
     required this.onClose,
   });
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: bgColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
       ),
       child: Column(
         children: [
+          // Drag Handle
           Container(
-            margin: const EdgeInsets.only(top: 15, bottom: 30),
+            margin: const EdgeInsets.only(top: 15, bottom: 20),
             width: 50,
             height: 5,
             decoration: BoxDecoration(
@@ -1195,40 +1213,38 @@ class FullScreenLessonPlayer extends StatelessWidget {
             ),
           ),
 
-          // Cover Image
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Container(
-                decoration: BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 20,
-                      offset: Offset(0, 10),
+          // 🎵 Album Art (Using Week Cover)
+          Container(
+            height: 250,
+            width: 250,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: (coverImage != null && coverImage!.isNotEmpty)
+                  ? Image.network(coverImage!, fit: BoxFit.cover)
+                  : Container(
+                      color: Colors.grey[800],
+                      child: const Icon(
+                        Icons.music_note,
+                        size: 80,
+                        color: Colors.white,
+                      ),
                     ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: (coverImage != null && coverImage!.isNotEmpty)
-                      ? Image.network(coverImage!, fit: BoxFit.cover)
-                      : Container(
-                          color: Colors.grey,
-                          child: const Icon(
-                            Icons.music_note,
-                            size: 80,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
             ),
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 20),
 
-          // Info
+          // Title Info
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -1236,31 +1252,37 @@ class FullScreenLessonPlayer extends StatelessWidget {
                 Text(
                   dayTitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 20,
+                  style: TextStyle(
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
+                    color: textColor,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   lessonTitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: textColor.withOpacity(0.7),
+                  ),
                 ),
               ],
             ),
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 20),
 
-          // Slider
+          // Progress Bar
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
               children: [
                 LinearProgressIndicator(
                   value: currentProgress,
-                  backgroundColor: Colors.grey[300],
+                  backgroundColor: isDark ? Colors.grey[800] : Colors.grey[300],
                   valueColor: AlwaysStoppedAnimation<Color>(
                     Theme.of(context).primaryColor,
                   ),
@@ -1272,14 +1294,17 @@ class FullScreenLessonPlayer extends StatelessWidget {
                   alignment: Alignment.centerRight,
                   child: Text(
                     "${(currentProgress * 100).toInt()}% Read",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: textColor.withOpacity(0.6),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 20),
 
           // Controls
           Row(
@@ -1287,9 +1312,11 @@ class FullScreenLessonPlayer extends StatelessWidget {
             children: [
               DropdownButton<double>(
                 value: speechRate,
+                dropdownColor: isDark ? Colors.grey[800] : Colors.white,
+                style: TextStyle(color: textColor),
                 underline: Container(),
-                icon: const Icon(Icons.speed),
-                items: [0.3, 0.5, 0.75, 1.0, 1.25]
+                icon: Icon(Icons.speed, color: textColor),
+                items: [0.3, 0.5, 0.75, 1.0, 1.25, 1.5]
                     .map(
                       (rate) => DropdownMenuItem(
                         value: rate,
@@ -1322,7 +1349,76 @@ class FullScreenLessonPlayer extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 50),
+
+          const SizedBox(height: 20),
+          const Divider(),
+
+          // 📅 Playlist Header
+          Padding(
+            padding: const EdgeInsets.only(left: 20, top: 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "THIS WEEK'S LESSONS",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: textColor.withOpacity(0.5),
+                ),
+              ),
+            ),
+          ),
+
+          // 📅 Scrollable Playlist
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              itemCount: daysList.length,
+              itemBuilder: (context, index) {
+                final day = daysList[index];
+                final isCurrent = index == activeIndex;
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isCurrent
+                          ? Theme.of(context).primaryColor.withOpacity(0.2)
+                          : Colors.transparent,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      "${index + 1}",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isCurrent
+                            ? Theme.of(context).primaryColor
+                            : textColor.withOpacity(0.5),
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    day.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isCurrent ? Theme.of(context).primaryColor : textColor,
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isCurrent
+                      ? const Icon(Icons.equalizer, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    if (!isCurrent) {
+                      onDaySelected(index);
+                    }
+                  },
+                );
+              },
+            ),
+          ),
         ],
       ),
     );

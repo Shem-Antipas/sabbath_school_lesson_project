@@ -6,6 +6,33 @@ import '../screens/devotional_reader_screen.dart';
 import '../screens/devotional_daily_list_screen.dart';
 
 class GlobalDevotionalSearchDelegate extends SearchDelegate {
+  
+  // ✅ Theme Support for Search Bar (Matches Local Search)
+  @override
+  ThemeData appBarTheme(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Theme.of(context).copyWith(
+      appBarTheme: AppBarTheme(
+        backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+        foregroundColor: isDark ? Colors.white : Colors.black87,
+        elevation: 0,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        hintStyle: TextStyle(color: isDark ? Colors.grey : Colors.black54),
+        border: InputBorder.none,
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: isDark ? Colors.white : Colors.black,
+      ),
+      textTheme: TextTheme(
+        titleLarge: TextStyle(
+          color: isDark ? Colors.white : Colors.black87,
+          fontSize: 18,
+        ),
+      ),
+    );
+  }
+
   // 1. Suggestions: Instant Book Title Matches
   @override
   Widget buildSuggestions(BuildContext context) {
@@ -30,12 +57,15 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
         // Show Book Suggestions
         ...bookMatches.map(
           (book) => ListTile(
-            leading: Image.asset(
-              book.imagePath,
-              width: 30,
-              height: 40,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const Icon(Icons.book),
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.asset(
+                book.imagePath,
+                width: 30,
+                height: 40,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.book),
+              ),
             ),
             title: Text(book.title),
             onTap: () {
@@ -46,6 +76,7 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
                   builder: (context) => DevotionalDailyListScreen(
                     bookId: book.id,
                     bookTitle: book.title,
+                    coverImagePath: book.imagePath, // ✅ PASSED IMAGE
                     monthIndex: 1, // Default to Jan
                     monthName: "January",
                   ),
@@ -96,21 +127,37 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
                 horizontal: 16,
                 vertical: 8,
               ),
-              leading: Image.asset(
-                result.bookImage,
-                width: 35,
-                height: 50,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.book),
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.asset(
+                  result.bookImage,
+                  width: 35,
+                  height: 50,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.book),
+                ),
               ),
               title: Text(
-                "${result.bookTitle} • ${_getMonthName(result.dayData.month)} ${result.dayData.day}",
+                "${result.bookTitle}",
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
-              subtitle: Text(
-                _getSnippet(result.dayData.content, query),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                   Text(
+                    "${_getMonthName(result.dayData.month)} ${result.dayData.day}",
+                     style: TextStyle(color: Theme.of(context).primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _getSnippet(result.dayData.content, query),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.grey[400] : Colors.grey[700]),
+                  ),
+                ],
               ),
+              isThreeLine: true,
               onTap: () {
                 // Navigate to Reader with Yellow Highlight
                 Navigator.push(
@@ -119,6 +166,7 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
                     builder: (context) => DevotionalReaderScreen(
                       bookId: result.bookId,
                       bookTitle: result.bookTitle,
+                      coverImagePath: result.bookImage, // ✅ PASSED IMAGE
                       monthIndex: result.dayData.month,
                       monthName: _getMonthName(result.dayData.month),
                       initialDay: result.dayData.day,
@@ -151,7 +199,8 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
         for (var item in jsonData) {
           final day = DevotionalDay.fromJson(item);
           if (day.content.toLowerCase().contains(lowerKey) ||
-              day.title.toLowerCase().contains(lowerKey)) {
+              day.title.toLowerCase().contains(lowerKey) ||
+              day.verse.toLowerCase().contains(lowerKey)) {
             matches.add(
               GlobalSearchResult(
                 bookId: book.id,
@@ -171,10 +220,16 @@ class GlobalDevotionalSearchDelegate extends SearchDelegate {
 
   String _getSnippet(String text, String query) {
     int idx = text.toLowerCase().indexOf(query.toLowerCase());
-    if (idx == -1) return text.substring(0, 50);
+    if (idx == -1) return text.substring(0, (text.length > 50 ? 50 : text.length));
+    
     int start = (idx - 20).clamp(0, text.length);
-    int end = (idx + 60).clamp(0, text.length);
-    return "...${text.substring(start, end)}...";
+    int end = (idx + query.length + 60).clamp(0, text.length);
+    
+    String snippet = text.substring(start, end);
+    if(start > 0) snippet = "...$snippet";
+    if(end < text.length) snippet = "$snippet...";
+    
+    return snippet;
   }
 
   String _getMonthName(int m) {

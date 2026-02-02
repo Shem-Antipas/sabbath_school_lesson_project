@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import '../providers/devotional_provider.dart';
 
-// --- MODEL FOR HIGHLIGHTS (Unchanged) ---
+// --- MODEL FOR HIGHLIGHTS ---
 class DevotionalHighlight {
   final String bookId;
   final int month;
@@ -53,6 +54,7 @@ class DevotionalHighlight {
 class DevotionalReaderScreen extends ConsumerStatefulWidget {
   final String bookId;
   final String bookTitle;
+  final String coverImagePath; 
   final int monthIndex;
   final String monthName;
   final int initialDay;
@@ -62,6 +64,7 @@ class DevotionalReaderScreen extends ConsumerStatefulWidget {
     super.key,
     required this.bookId,
     required this.bookTitle,
+    required this.coverImagePath,
     required this.monthIndex,
     required this.monthName,
     required this.initialDay,
@@ -96,11 +99,14 @@ class _DevotionalReaderScreenState
   double _speechRate = 0.5;
   bool _showAudioPlayer = false;
 
-  // ✅ AUDIO PROGRESS TRACKING
-  String _cachedAudioText = "";
-  int _currentWordStart = 0;
-  int _currentWordEnd = 0;
+  // ✅ AUDIO QUEUE SYSTEM (For Android compatibility)
+  List<String> _audioQueue = [];
+  int _currentQueueIndex = 0;
+
+  // Progress tracking variables
   int _totalTextLength = 1;
+  int _playedTextLength = 0;
+  int _currentChunkProgress = 0;
 
   @override
   void initState() {
@@ -108,12 +114,12 @@ class _DevotionalReaderScreenState
     _currentDay = widget.initialDay;
     _loadUserHighlights();
     _saveReadingProgress(widget.initialDay);
-    _initTts(); // ✅ Init Audio
+    _initTts(); 
   }
 
   @override
   void dispose() {
-    flutterTts.stop(); // ✅ Stop audio on exit
+    flutterTts.stop();
     super.dispose();
   }
 
@@ -123,61 +129,79 @@ class _DevotionalReaderScreenState
     await flutterTts.setPitch(1.0);
     await flutterTts.setSpeechRate(_speechRate);
 
-    // iOS Audio Config
-    await flutterTts
-        .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+    // Critical for queueing
+    await flutterTts.awaitSpeakCompletion(true);
+
+    // iOS Background Audio
+    if (Platform.isIOS) {
+      await flutterTts.setIosAudioCategory(
+        IosTextToSpeechAudioCategory.playback,
+        [
           IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
           IosTextToSpeechAudioCategoryOptions.allowBluetooth,
           IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
           IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-        ], IosTextToSpeechAudioMode.defaultMode);
+        ],
+        IosTextToSpeechAudioMode.defaultMode,
+      );
+    }
+
+    // Android Background Service
+    if (Platform.isAndroid) {
+      try {
+        var voices = await flutterTts.getVoices;
+      } catch (e) {
+        debugPrint("TTS Setup Warning: $e");
+      }
+    }
 
     flutterTts.setStartHandler(() {
-      if (mounted)
-        setState(() {
-          _isSpeaking = true;
-          _isPaused = false;
-        });
+      if (mounted) setState(() { _isSpeaking = true; _isPaused = false; });
     });
 
     flutterTts.setCompletionHandler(() {
-      if (mounted)
-        setState(() {
-          _isSpeaking = false;
-          _isPaused = false;
-          _currentWordStart = 0;
-        });
+      if (mounted) _onChunkComplete();
     });
 
     flutterTts.setErrorHandler((msg) {
-      if (mounted)
-        setState(() {
-          _isSpeaking = false;
-          _isPaused = false;
-        });
+      if (mounted) setState(() { _isSpeaking = false; _isPaused = false; });
     });
 
-    // ✅ PROGRESS LISTENER
-    flutterTts.setProgressHandler((
-      String text,
-      int start,
-      int end,
-      String word,
-    ) {
-      if (mounted) {
-        setState(() {
-          _currentWordStart = start;
-          _currentWordEnd = end;
-        });
-      }
+    flutterTts.setProgressHandler((String text, int start, int end, String word) {
+      if (mounted) setState(() { _currentChunkProgress = start; });
     });
   }
 
-  // ✅ 1. PREPARE AUDIO (Headphone Click)
+  void _onChunkComplete() {
+    if (_currentQueueIndex < _audioQueue.length) {
+      _playedTextLength += _audioQueue[_currentQueueIndex].length;
+    }
+
+    if (_currentQueueIndex < _audioQueue.length - 1) {
+      _currentQueueIndex++;
+      _playCurrentChunk();
+    } else {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+        _currentQueueIndex = 0;
+        _playedTextLength = 0;
+        _currentChunkProgress = 0;
+      });
+    }
+  }
+
+  Future<void> _playCurrentChunk() async {
+    if (_currentQueueIndex < _audioQueue.length) {
+      await flutterTts.speak(_audioQueue[_currentQueueIndex]);
+    }
+  }
+
+  // ✅ PREPARE AUDIO (Queue Logic)
   void _prepareAudioPanel() {
     if (_showAudioPlayer) {
-      // If playing, we can toggle visibility or just return
       setState(() => _showAudioPlayer = false);
+      _stop();
       return;
     }
 
@@ -198,29 +222,42 @@ class _DevotionalReaderScreenState
     String fullText =
         "${reading.title}. ${reading.verse}. ${reading.verseRef}. $bodyText";
 
+    // Split text into safe chunks
+    List<String> chunks = [];
+    RegExp splitRegex = RegExp(r'(?<=[.?!])\s+');
+    List<String> sentences = fullText.split(splitRegex);
+
+    StringBuffer buffer = StringBuffer();
+    for (String sentence in sentences) {
+      if (buffer.length + sentence.length > 3000) {
+        chunks.add(buffer.toString());
+        buffer.clear();
+      }
+      buffer.write(sentence);
+      buffer.write(" ");
+    }
+    if (buffer.isNotEmpty) chunks.add(buffer.toString());
+
     setState(() {
-      _cachedAudioText = fullText;
-      _totalTextLength = fullText.length;
-      _currentWordStart = 0;
+      _audioQueue = chunks;
+      _currentQueueIndex = 0;
+      _totalTextLength = fullText.length > 0 ? fullText.length : 1;
+      _playedTextLength = 0;
+      _currentChunkProgress = 0;
       _showAudioPlayer = true;
       _isSpeaking = false;
       _isPaused = false;
     });
   }
 
-  // ✅ 2. TOGGLE PLAY
   Future<void> _togglePlay() async {
-    if (_cachedAudioText.isEmpty) return;
+    if (_audioQueue.isEmpty) return;
 
     if (_isSpeaking && !_isPaused) {
       await _pause();
     } else {
-      if (mounted)
-        setState(() {
-          _isSpeaking = true;
-          _isPaused = false;
-        });
-      await flutterTts.speak(_cachedAudioText);
+      if (mounted) setState(() { _isSpeaking = true; _isPaused = false; });
+      _playCurrentChunk();
     }
   }
 
@@ -231,36 +268,31 @@ class _DevotionalReaderScreenState
         _isSpeaking = false;
         _isPaused = false;
         _showAudioPlayer = false;
-        _currentWordStart = 0;
+        _currentQueueIndex = 0;
+        _playedTextLength = 0;
+        _currentChunkProgress = 0;
       });
     }
   }
 
   Future<void> _pause() async {
     await flutterTts.pause();
-    if (mounted) {
-      setState(() {
-        _isSpeaking = false;
-        _isPaused = true;
-      });
-    }
+    if (mounted) setState(() { _isSpeaking = false; _isPaused = true; });
   }
 
   void _changeSpeed(double newRate) {
     setState(() => _speechRate = newRate);
     flutterTts.setSpeechRate(newRate);
-    if (_isSpeaking) {
+    if (_isSpeaking && !_isPaused) {
       flutterTts.stop();
-      flutterTts.speak(_cachedAudioText);
+      _playCurrentChunk();
     }
   }
 
-  // ✅ 3. SHOW FULL SCREEN PLAYER
   void _showFullScreenPlayer() {
     final asyncData = ref.read(devotionalContentProvider(widget.bookId));
     if (asyncData.value == null) return;
 
-    // Get Title for the UI
     final allReadings = asyncData.value!;
     final monthReadings = allReadings
         .where((r) => r.month == widget.monthIndex)
@@ -270,16 +302,21 @@ class _DevotionalReaderScreenState
       orElse: () => monthReadings.first,
     );
 
+    double rawProgress =
+        (_playedTextLength + _currentChunkProgress) / _totalTextLength;
+    double safeProgress = rawProgress.clamp(0.0, 1.0);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => FullScreenDevotionalPlayer(
         bookTitle: widget.bookTitle,
+        coverImagePath: widget.coverImagePath,
         dailyTitle: reading.title,
         dateString: "${widget.monthName} $_currentDay",
         isPlaying: _isSpeaking && !_isPaused,
-        currentProgress: (_currentWordStart / _totalTextLength).clamp(0.0, 1.0),
+        currentProgress: safeProgress,
         speechRate: _speechRate,
         onPlayPause: () {
           _togglePlay();
@@ -300,8 +337,7 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // --- PERSISTENCE METHODS ---
-
+  // --- PERSISTENCE ---
   Future<void> _saveReadingProgress(int day) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('last_read_day_${widget.bookId}', day);
@@ -329,7 +365,6 @@ class _DevotionalReaderScreenState
     String colorHex,
   ) async {
     if (!selection.isValid || selection.isCollapsed) return;
-
     _userHighlights.removeWhere(
       (h) =>
           h.bookId == widget.bookId &&
@@ -339,7 +374,6 @@ class _DevotionalReaderScreenState
           h.startOffset < selection.end &&
           h.endOffset > selection.start,
     );
-
     final newHighlight = DevotionalHighlight(
       bookId: widget.bookId,
       month: widget.monthIndex,
@@ -349,12 +383,10 @@ class _DevotionalReaderScreenState
       endOffset: selection.end,
       colorHex: colorHex,
     );
-
     setState(() {
       _userHighlights.add(newHighlight);
       _currentSelection = null;
     });
-
     _saveHighlightsToPrefs();
   }
 
@@ -419,13 +451,6 @@ class _DevotionalReaderScreenState
                       const Icon(Icons.text_fields, size: 28),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  Center(
-                    child: Text(
-                      "Font Size: ${_fontSize.toInt()}",
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ),
                 ],
               ),
             );
@@ -435,20 +460,26 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // ✅ MINI AUDIO PLAYER (Expandable)
-  Widget _buildMiniPlayer(bool isDark) {
+  // ✅ MINI PLAYER WIDGET
+  Widget _buildMiniPlayer() {
     if (!_showAudioPlayer) return const SizedBox.shrink();
 
+    // Theme Awareness
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = isDark ? Colors.grey[900] : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
+    final borderColor = isDark ? Colors.grey[800] : Colors.grey[300];
+
+    // ✅ FIX: Use White in dark mode for high visibility
+    final iconColor = isDark ? Colors.white : Theme.of(context).primaryColor;
 
     return GestureDetector(
-      onTap: _showFullScreenPlayer, // ✅ Click to Expand
+      onTap: _showFullScreenPlayer,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
         decoration: BoxDecoration(
           color: bgColor,
-          border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.3))),
+          border: Border(top: BorderSide(color: borderColor!)),
           boxShadow: [
             BoxShadow(
               color: Colors.black12,
@@ -459,21 +490,25 @@ class _DevotionalReaderScreenState
         ),
         child: Row(
           children: [
-            // Icon Placeholder for Cover
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Icon(
-                Icons.menu_book,
-                color: Theme.of(context).primaryColor,
+            // Cover Image
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.asset(
+                widget.coverImagePath,
+                width: 40,
+                height: 60,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: 40, 
+                    height: 60, 
+                    color: Colors.grey,
+                    child: const Icon(Icons.book, size: 20, color: Colors.white),
+                  );
+                },
               ),
             ),
             const SizedBox(width: 12),
-
             // Title
             Expanded(
               child: Column(
@@ -500,7 +535,6 @@ class _DevotionalReaderScreenState
                 ],
               ),
             ),
-
             // Play/Pause
             IconButton(
               icon: Icon(
@@ -509,7 +543,8 @@ class _DevotionalReaderScreenState
                     : Icons.play_circle_fill,
               ),
               iconSize: 40,
-              color: Theme.of(context).primaryColor,
+              // ✅ Applied High Contrast Color
+              color: iconColor,
               onPressed: _togglePlay,
             ),
           ],
@@ -519,7 +554,6 @@ class _DevotionalReaderScreenState
   }
 
   // --- UI BUILDING ---
-
   @override
   Widget build(BuildContext context) {
     final asyncData = ref.watch(devotionalContentProvider(widget.bookId));
@@ -557,7 +591,6 @@ class _DevotionalReaderScreenState
         centerTitle: true,
         iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black),
         actions: [
-          // ✅ HEADPHONE ICON (Prepares only)
           IconButton(
             icon: const Icon(Icons.headphones),
             tooltip: "Listen",
@@ -586,8 +619,7 @@ class _DevotionalReaderScreenState
           ),
         ],
       ),
-      // ✅ BOTTOM SHEET FOR AUDIO
-      bottomSheet: _showAudioPlayer ? _buildMiniPlayer(isDark) : null,
+      bottomSheet: _showAudioPlayer ? _buildMiniPlayer() : null,
 
       body: asyncData.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -623,16 +655,13 @@ class _DevotionalReaderScreenState
                       _currentSelection = null;
                       _readingProgress = 0.0;
                     });
-                    // ✅ Stop audio when swiping to new day
                     if (_isSpeaking || _isPaused) _stop();
                     _saveReadingProgress(_currentDay);
                   }
                 },
                 itemBuilder: (context, index) {
                   final reading = monthReadings[index];
-                  final List<String> cleanParagraphs = _reflowText(
-                    reading.content,
-                  );
+                  final List<String> cleanParagraphs = _reflowText(reading.content);
 
                   return NotificationListener<ScrollNotification>(
                     onNotification: (ScrollNotification notification) {
@@ -645,8 +674,7 @@ class _DevotionalReaderScreenState
                           Future.microtask(() {
                             if (mounted)
                               setState(
-                                () =>
-                                    _readingProgress = progress.clamp(0.0, 1.0),
+                                () => _readingProgress = progress.clamp(0.0, 1.0),
                               );
                           });
                         }
@@ -654,13 +682,9 @@ class _DevotionalReaderScreenState
                       return false;
                     },
                     child: SingleChildScrollView(
-                      // ✅ Padding adjusted for bottom audio player
                       padding: _showAudioPlayer
                           ? const EdgeInsets.fromLTRB(20, 10, 20, 130)
-                          : const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 10,
-                            ),
+                          : const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                       child: Column(
                         children: [
                           SelectableText(
@@ -669,15 +693,12 @@ class _DevotionalReaderScreenState
                             style: TextStyle(
                               fontSize: _fontSize + 6,
                               fontWeight: FontWeight.bold,
-                              color: isDark
-                                  ? Colors.tealAccent
-                                  : const Color(0xFF7D2D3B),
+                              color: isDark ? Colors.tealAccent : const Color(0xFF7D2D3B),
                               fontFamily: 'Georgia',
                               height: 1.3,
                             ),
                           ),
                           const SizedBox(height: 24),
-
                           if (reading.verse.isNotEmpty)
                             Stack(
                               children: [
@@ -688,9 +709,7 @@ class _DevotionalReaderScreenState
                                     vertical: 25,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: isDark
-                                        ? Colors.grey[850]
-                                        : const Color(0xFFF9F9F9),
+                                    color: isDark ? Colors.grey[850] : const Color(0xFFF9F9F9),
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
                                       color: isDark
@@ -724,9 +743,7 @@ class _DevotionalReaderScreenState
                                         style: TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: _fontSize - 2,
-                                          color: isDark
-                                              ? Colors.teal[200]
-                                              : Colors.teal[800],
+                                          color: isDark ? Colors.teal[200] : Colors.teal[800],
                                         ),
                                       ),
                                     ],
@@ -743,7 +760,6 @@ class _DevotionalReaderScreenState
                                 ),
                               ],
                             ),
-
                           ...List.generate(cleanParagraphs.length, (paraIndex) {
                             final paraText = cleanParagraphs[paraIndex];
                             final bool containsSearch =
@@ -752,7 +768,6 @@ class _DevotionalReaderScreenState
                                 paraText.toLowerCase().contains(
                                   widget.searchQuery!.toLowerCase(),
                                 );
-
                             if (containsSearch) {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (_highlightKey.currentContext != null) {
@@ -765,7 +780,6 @@ class _DevotionalReaderScreenState
                                 }
                               });
                             }
-
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 18.0),
                               child: Container(
@@ -791,82 +805,39 @@ class _DevotionalReaderScreenState
                                     _currentSelection = selection;
                                     _focusedParagraphIndex = paraIndex;
                                   },
-                                  contextMenuBuilder:
-                                      (context, editableTextState) {
-                                        return AdaptiveTextSelectionToolbar(
-                                          anchors: editableTextState
-                                              .contextMenuAnchors,
-                                          children: [
-                                            TextSelectionToolbarTextButton(
-                                              padding: const EdgeInsets.all(
-                                                12.0,
-                                              ),
-                                              onPressed: () => editableTextState
-                                                  .copySelection(
-                                                    SelectionChangedCause
-                                                        .toolbar,
-                                                  ),
-                                              child: const Icon(
-                                                Icons.copy,
-                                                size: 20,
-                                              ),
-                                            ),
-                                            _buildColorButton(
-                                              paraIndex,
-                                              "0xFF81C784",
-                                              Colors.green,
-                                              editableTextState,
-                                            ),
-                                            _buildColorButton(
-                                              paraIndex,
-                                              "0xFFFFF59D",
-                                              Colors.yellow,
-                                              editableTextState,
-                                            ),
-                                            _buildColorButton(
-                                              paraIndex,
-                                              "0xFF64B5F6",
-                                              Colors.blue,
-                                              editableTextState,
-                                            ),
-                                            _buildColorButton(
-                                              paraIndex,
-                                              "0xFFF06292",
-                                              Colors.pink,
-                                              editableTextState,
-                                            ),
-                                            TextSelectionToolbarTextButton(
-                                              padding: const EdgeInsets.all(
-                                                12.0,
-                                              ),
-                                              onPressed: () {
-                                                _clearHighlightsForParagraph(
-                                                  paraIndex,
-                                                );
-                                                editableTextState.hideToolbar();
-                                              },
-                                              child: const Icon(
-                                                Icons.format_clear,
-                                                size: 20,
-                                                color: Colors.red,
-                                              ),
-                                            ),
-                                          ],
-                                        );
-                                      },
+                                  contextMenuBuilder: (context, editableTextState) {
+                                    return AdaptiveTextSelectionToolbar(
+                                      anchors: editableTextState.contextMenuAnchors,
+                                      children: [
+                                        TextSelectionToolbarTextButton(
+                                          padding: const EdgeInsets.all(12.0),
+                                          onPressed: () => editableTextState
+                                              .copySelection(SelectionChangedCause.toolbar),
+                                          child: const Icon(Icons.copy, size: 20),
+                                        ),
+                                        _buildColorButton(paraIndex, "0xFF81C784", Colors.green, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFFFFF59D", Colors.yellow, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFF64B5F6", Colors.blue, editableTextState),
+                                        _buildColorButton(paraIndex, "0xFFF06292", Colors.pink, editableTextState),
+                                        TextSelectionToolbarTextButton(
+                                          padding: const EdgeInsets.all(12.0),
+                                          onPressed: () {
+                                            _clearHighlightsForParagraph(paraIndex);
+                                            editableTextState.hideToolbar();
+                                          },
+                                          child: const Icon(Icons.format_clear, size: 20, color: Colors.red),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
                             );
                           }),
-
                           const SizedBox(height: 20),
                           Divider(color: Colors.grey.withOpacity(0.3)),
                           const SizedBox(height: 20),
-                          _buildBottomNavigation(
-                            context,
-                            index,
-                            monthReadings.length,
-                          ),
+                          _buildBottomNavigation(context, index, monthReadings.length), // ✅ Added Back
                           const SizedBox(height: 50),
                         ],
                       ),
@@ -874,7 +845,6 @@ class _DevotionalReaderScreenState
                   );
                 },
               ),
-
               Positioned(
                 right: 2,
                 top: 0,
@@ -889,9 +859,7 @@ class _DevotionalReaderScreenState
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: FractionallySizedBox(
-                      heightFactor: _readingProgress == 0
-                          ? 0.02
-                          : _readingProgress,
+                      heightFactor: _readingProgress == 0 ? 0.02 : _readingProgress,
                       widthFactor: 1.0,
                       child: Container(
                         decoration: BoxDecoration(
@@ -910,7 +878,7 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // --- WIDGET HELPERS ---
+  // ✅ HELPER: Bottom Navigation (Restored)
   Widget _buildBottomNavigation(
     BuildContext context,
     int index,
@@ -981,7 +949,6 @@ class _DevotionalReaderScreenState
     );
   }
 
-  // --- TEXT PROCESSING HELPERS ---
   List<TextSpan> _buildRichText(
     String text,
     String? query,
@@ -1108,6 +1075,7 @@ class _DevotionalReaderScreenState
 // ✅ NEW FULL SCREEN PLAYER WIDGET
 class FullScreenDevotionalPlayer extends StatelessWidget {
   final String bookTitle;
+  final String coverImagePath;
   final String dailyTitle;
   final String dateString;
   final bool isPlaying;
@@ -1121,6 +1089,7 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
   const FullScreenDevotionalPlayer({
     super.key,
     required this.bookTitle,
+    required this.coverImagePath,
     required this.dailyTitle,
     required this.dateString,
     required this.isPlaying,
@@ -1135,11 +1104,19 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    // ✅ FIX: High visibility colors in Dark Mode
+    // Circle background: White in dark mode, Primary in light mode
+    final circleColor = isDark ? Colors.white : Theme.of(context).primaryColor;
+    // Icon color: Black in dark mode, White in light mode
+    final iconColor = isDark ? Colors.black : Colors.white;
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: backgroundColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
       ),
       child: Column(
@@ -1153,55 +1130,33 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
           ),
-
-          // "Cover" (Generic Icon/Card since Devotionals don't pass Image paths easily here)
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
               child: Container(
                 decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[850] : Colors.blueGrey[50],
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black12,
+                      color: Colors.black26,
                       blurRadius: 20,
                       offset: Offset(0, 10),
                     ),
                   ],
                 ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.menu_book_rounded,
-                        size: 80,
-                        color: Theme.of(context).primaryColor,
-                      ),
-                      const SizedBox(height: 20),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text(
-                          bookTitle,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    coverImagePath, 
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => 
+                        Container(color: Colors.grey, child: Icon(Icons.book, size: 50, color: Colors.white)),
                   ),
                 ),
               ),
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Info
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -1209,9 +1164,10 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
                 Text(
                   dailyTitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
+                    color: textColor,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1223,10 +1179,7 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Slider
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -1251,17 +1204,16 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Controls
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               DropdownButton<double>(
                 value: speechRate,
                 underline: Container(),
-                icon: const Icon(Icons.speed),
+                icon: Icon(Icons.speed, color: textColor),
+                dropdownColor: backgroundColor,
+                style: TextStyle(color: textColor),
                 items: [0.3, 0.5, 0.75, 1.0, 1.25]
                     .map(
                       (rate) => DropdownMenuItem(
@@ -1274,20 +1226,20 @@ class FullScreenDevotionalPlayer extends StatelessWidget {
                   if (val != null) onChangeSpeed(val);
                 },
               ),
-
               CircleAvatar(
                 radius: 35,
-                backgroundColor: Theme.of(context).primaryColor,
+                // ✅ APPLIED FIX HERE
+                backgroundColor: circleColor,
                 child: IconButton(
                   icon: Icon(
                     isPlaying ? Icons.pause : Icons.play_arrow,
                     size: 35,
                   ),
-                  color: Colors.white,
+                  // ✅ APPLIED FIX HERE
+                  color: iconColor,
                   onPressed: onPlayPause,
                 ),
               ),
-
               IconButton(
                 icon: const Icon(Icons.stop_circle_outlined, size: 35),
                 color: Colors.redAccent,

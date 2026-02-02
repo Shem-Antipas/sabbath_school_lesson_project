@@ -846,12 +846,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          // Using a Teal color to distinguish it as the "New Curriculum"
-          color: const Color.fromARGB(255, 1, 14, 76), 
+          // Matches your Royal Navy branding (0xFF142042) 
+          // or keep your specific deep blue: Color.fromARGB(255, 1, 14, 76)
+          color: const Color(0xFF142042), 
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: const Color.fromARGB(255, 0, 27, 72).withOpacity(0.3),
+              color: Colors.black.withOpacity(0.2), // Softer shadow
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -859,22 +860,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
         child: const Row(
           children: [
-            Icon(Icons.auto_stories, color: Colors.white, size: 28),
+            // Updated Icon: Represents the younger demographic better than a book
+            Icon(Icons.child_care_rounded, color: Colors.white, size: 32),
             SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "Alive in Jesus",
+                    "Children & Youth", // UPDATED: Reflects the wider scope
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                      fontSize: 17, // Slightly larger for emphasis
                     ),
                   ),
+                  SizedBox(height: 4),
                   Text(
-                    "New Curriculum (Babies - Primary)",
+                    "Alive in Jesus, Cornerstone, PowerPoints...", // UPDATED: Shows variety
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white70,
                       fontSize: 12,

@@ -43,7 +43,7 @@ class DevotionalsLibraryScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 0.65, // Made taller to fit text below image
+          childAspectRatio: 0.65, 
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
@@ -72,25 +72,22 @@ class DevotionalsLibraryScreen extends StatelessWidget {
       },
       child: Container(
         decoration: BoxDecoration(
-          // ✅ Card Background Color
           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
           borderRadius: BorderRadius.circular(12),
-          // ✅ Drop Shadow slightly on the card
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1), // Gentle shadow
+              color: Colors.black.withOpacity(0.1), 
               blurRadius: 8,
-              offset: const Offset(0, 4), // Shifted down slightly
+              offset: const Offset(0, 4), 
             ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 1. IMAGE SECTION (Expanded to fill space)
+            // 1. IMAGE SECTION
             Expanded(
               child: ClipRRect(
-                // Only round top corners
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(12),
                 ),
@@ -113,7 +110,7 @@ class DevotionalsLibraryScreen extends StatelessWidget {
               ),
             ),
 
-            // 2. TITLE SECTION (Below the image)
+            // 2. TITLE SECTION
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
               child: Text(
@@ -123,7 +120,7 @@ class DevotionalsLibraryScreen extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: isDark ? Colors.white : Colors.black87,
-                  fontSize: 15, // Slightly smaller/cleaner
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
                 ),
@@ -137,7 +134,7 @@ class DevotionalsLibraryScreen extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
-// SCREEN 2: MONTH SELECTION (Unchanged)
+// SCREEN 2: MONTH SELECTION
 // -----------------------------------------------------------------------------
 class MonthSelectionScreen extends StatelessWidget {
   final DevotionalBookInfo book;
@@ -196,6 +193,7 @@ class MonthSelectionScreen extends StatelessWidget {
                   builder: (context) => DevotionalDailyListScreen(
                     bookId: book.id,
                     bookTitle: book.title,
+                    coverImagePath: book.imagePath, // ✅ PASSED IMAGE PATH HERE
                     monthIndex: index + 1,
                     monthName: months[index],
                   ),

@@ -7,17 +7,17 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'dart:developer'; // Use developer log for cleaner output
+import 'dart:developer'; 
 
 final apiProvider = Provider((ref) => ApiService());
 
 class ApiService {
   final Dio _dio = Dio();
   
-  // 1. URLS
+  // 1. URLS - SWITCHED TO V2 as default for Public API
   static const String _localProxy = 'http://127.0.0.1:8787';
-  static const String _publicApi = 'https://sabbath-school.adventech.io/api/v1';
-  static const String _v2Api = 'https://sabbath-school.adventech.io/api/v2'; 
+  // ✅ CHANGED: Pointing to v2 to get "Alive in Jesus" content
+  static const String _publicApi = 'https://sabbath-school.adventech.io/api/v2'; 
 
   // 2. DYNAMIC BASE URL
   String get baseUrl {
@@ -28,14 +28,36 @@ class ApiService {
 
   Map<String, String> get _headers => {'Content-Type': 'application/json'};
 
-  // 3. GET QUARTERLIES
+  // 3. GET QUARTERLIES (Robust V2 Support)
   Future<List<Quarterly>> getQuarterlies(String lang) async {
     try {
-      String url = (baseUrl == _publicApi) ? '$baseUrl/$lang/quarterlies/index.json' : '$baseUrl/quarterlies/$lang';
+      // Construct URL: .../api/v2/en/quarterlies/index.json
+      String url = (baseUrl == _publicApi) 
+          ? '$baseUrl/$lang/quarterlies/index.json' 
+          : '$baseUrl/quarterlies/$lang';
+          
+      log("📡 Fetching Quarterlies from: $url");
+      
       final response = await _dio.get(url);
-      List<dynamic> data = (response.data is String) ? json.decode(response.data) : response.data;
-      return data.map((e) => Quarterly.fromJson(e)).toList();
+      var rawData = response.data;
+
+      // Handle String response (common in some http clients)
+      if (rawData is String) {
+        rawData = json.decode(rawData);
+      }
+
+      List<dynamic> listData = [];
+
+      // ✅ V2 HANDLE: Sometimes V2 returns { "quarterlies": [...] } instead of just [...]
+      if (rawData is Map && rawData.containsKey('quarterlies')) {
+        listData = rawData['quarterlies'];
+      } else if (rawData is List) {
+        listData = rawData;
+      }
+
+      return listData.map((e) => Quarterly.fromJson(e)).toList();
     } catch (e) {
+      log("❌ Error fetching quarterlies: $e");
       throw Exception('Failed to fetch quarterlies: $e');
     }
   }
@@ -45,16 +67,50 @@ class ApiService {
     try {
       String cleanId = quarterlyId.contains('/') ? quarterlyId.split('/').last : quarterlyId;
       if (cleanId.startsWith('en-')) cleanId = cleanId.substring(3);
-      String url = (baseUrl == _publicApi) ? '$baseUrl/en/quarterlies/$cleanId/index.json' : '$baseUrl/quarterly/en/$cleanId';
+      
+      String url = (baseUrl == _publicApi) 
+          ? '$baseUrl/en/quarterlies/$cleanId/index.json' 
+          : '$baseUrl/quarterly/en/$cleanId';
+          
       final response = await _dio.get(url);
-      Map<String, dynamic> data = (response.data is String) ? json.decode(response.data) : Map<String, dynamic>.from(response.data);
+      
+      // Handle parsing safely
+      var rawData = response.data;
+      if (rawData is String) rawData = json.decode(rawData);
+      Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
       return (data['lessons'] as List? ?? []).map((json) => Lesson.fromJson(json)).toList();
     } catch (e) {
       rethrow;
     }
   }
 
-  // 5. FETCH LESSON CONTENT (Corrected Logic)
+  // 5. FETCH QUARTERLY DETAILS (Alive in Jesus / PDF Check)
+  Future<Map<String, dynamic>?> fetchQuarterlyDetailsWithFallback(String id) async {
+    final client = http.Client();
+    // Try V2 specifically for details as it has better metadata
+    final url = '$_publicApi/en/quarterlies/$id/index.json';
+
+    try {
+      log("📡 Fetching details: $url");
+      final response = await client.get(Uri.parse(url));
+      
+      if (response.statusCode == 200) {
+        // PDF CHECK: If body starts with <, it's HTML (likely a PDF/404)
+        if (response.body.trim().startsWith('<')) {
+          return null; 
+        }
+        return json.decode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      log("Failed to fetch details: $e");
+    } finally {
+      client.close();
+    }
+    return null;
+  }
+
+  // 6. FETCH LESSON CONTENT
   Future<LessonContent> fetchLessonContent(String index) async {
     String cleanIndex = index.startsWith('/') ? index.substring(1) : index;
     List<String> parts = cleanIndex.split('/');
@@ -63,19 +119,18 @@ class ApiService {
     String quarterlyId = "";
     String lessonId = "";
 
-    // A. CONSTRUCT STANDARD V2 URL
+    // CONSTRUCT URL
     if (baseUrl == _publicApi && parts.length >= 3) {
       lang = parts[0];
       quarterlyId = parts[1];
       lessonId = parts[2];
+      // strip lang prefix if exists (e.g. en-2025-01 -> 2025-01)
       if (quarterlyId.startsWith('$lang-')) quarterlyId = quarterlyId.substring(lang.length + 1);
 
       if (parts.length == 4) {
-        // Specific Day Content
-        url = "$_v2Api/$lang/quarterlies/$quarterlyId/lessons/$lessonId/days/${parts[3]}/read/index.json";
+        url = "$baseUrl/$lang/quarterlies/$quarterlyId/lessons/$lessonId/days/${parts[3]}/read/index.json";
       } else {
-        // Full Lesson Content
-        url = "$_v2Api/$lang/quarterlies/$quarterlyId/lessons/$lessonId/index.json";
+        url = "$baseUrl/$lang/quarterlies/$quarterlyId/lessons/$lessonId/index.json";
       }
     } else {
       url = "$baseUrl/quarterly/$cleanIndex";
@@ -86,66 +141,41 @@ class ApiService {
     try {
       var response = await http.get(Uri.parse(url), headers: _headers);
 
-      // ============================================================
-      // 🚀 VALIDATION LOGIC: Is this actually empty?
-      // ============================================================
+      // FALLBACK LOGIC
       bool needsFallback = false;
-
-      // 1. Check HTTP Status
       if (response.statusCode != 200 || response.body.trim().startsWith('<')) {
         needsFallback = true;
       } else {
-        // 2. Decode and Inspect
         try {
           final Map<String, dynamic> data = json.decode(response.body);
           final tempContent = LessonContent.fromJson(data);
-          
-          // Check for ANY valid content
-          bool hasText = (tempContent.content != null && tempContent.content!.isNotEmpty);
-          bool hasPdf = (tempContent.pdf != null && tempContent.pdf!.isNotEmpty);
-          bool hasDays = (tempContent.days != null && tempContent.days!.isNotEmpty);
-          // ✅ CRITICAL: Check for 'children' (Table of Contents)
-          bool hasChapters = (tempContent.children != null && tempContent.children!.isNotEmpty);
+          bool hasContent = (tempContent.content?.isNotEmpty ?? false) || 
+                            (tempContent.pdf?.isNotEmpty ?? false) || 
+                            (tempContent.days?.isNotEmpty ?? false) ||
+                            (tempContent.children?.isNotEmpty ?? false); // Check for children (new structure)
 
-          // Only fallback if EVERYTHING is missing
-          if (!hasText && !hasPdf && !hasDays && !hasChapters) {
-             log("⚠️ Standard API data seems empty (No Text, PDF, Days, or Chapters).");
-             needsFallback = true;
-          }
+          if (!hasContent) needsFallback = true;
         } catch (e) {
-          log("⚠️ parsing check failed: $e");
-          needsFallback = true; 
+          needsFallback = true;
         }
       }
 
-      // ============================================================
-      // ♻️ FALLBACK: TRY RESOURCE API
-      // ============================================================
+      // TRY RESOURCE API FALLBACK
       if (needsFallback && parts.length >= 3) {
-        // Resource URL format: .../resources/quarterly/lesson/index.json
-        String resourceUrl = "$_v2Api/$lang/resources/$quarterlyId/$lessonId/index.json";
+        String resourceUrl = "$baseUrl/$lang/resources/$quarterlyId/$lessonId/index.json";
         log("🔄 Switching to Resource API: $resourceUrl");
-        
-        final resourceResponse = await http.get(Uri.parse(resourceUrl), headers: _headers);
-        
-        if (resourceResponse.statusCode == 200 && !resourceResponse.body.trim().startsWith('<')) {
-           response = resourceResponse; // ✅ Success! Use this response.
-           log("✅ Resource API success!");
+        final resResponse = await http.get(Uri.parse(resourceUrl), headers: _headers);
+        if (resResponse.statusCode == 200 && !resResponse.body.trim().startsWith('<')) {
+           response = resResponse;
         }
       }
 
-      // Final Return
       if (response.statusCode == 200) {
-        if (response.body.trim().startsWith('<')) {
-           return LessonContent(days: [], title: "No Content Found"); 
-        }
-        final Map<String, dynamic> data = json.decode(response.body);
-        return LessonContent.fromJson(data);
-      } else {
-        return LessonContent(days: [], title: "Error ${response.statusCode}");
+         if (response.body.trim().startsWith('<')) return LessonContent(days: [], title: "Content Unavailable");
+         return LessonContent.fromJson(json.decode(response.body));
       }
+      return LessonContent(days: [], title: "Error ${response.statusCode}");
     } catch (e) {
-      log("❌ Connection Error: $e");
       return LessonContent(days: [], title: "Connection Error");
     }
   }

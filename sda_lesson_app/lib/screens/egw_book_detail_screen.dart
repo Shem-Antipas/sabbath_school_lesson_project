@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -48,20 +49,20 @@ class UserHighlight {
   });
 
   Map<String, dynamic> toJson() => {
-    'chapterIndex': chapterIndex,
-    'itemIndex': itemIndex,
-    'startOffset': startOffset,
-    'endOffset': endOffset,
-    'colorHex': colorHex,
-  };
+        'chapterIndex': chapterIndex,
+        'itemIndex': itemIndex,
+        'startOffset': startOffset,
+        'endOffset': endOffset,
+        'colorHex': colorHex,
+      };
 
   factory UserHighlight.fromJson(Map<String, dynamic> json) => UserHighlight(
-    chapterIndex: json['chapterIndex'] ?? 0,
-    itemIndex: json['itemIndex'],
-    startOffset: json['startOffset'],
-    endOffset: json['endOffset'],
-    colorHex: json['colorHex'] ?? "0xFF81C784",
-  );
+        chapterIndex: json['chapterIndex'] ?? 0,
+        itemIndex: json['itemIndex'],
+        startOffset: json['startOffset'],
+        endOffset: json['endOffset'],
+        colorHex: json['colorHex'] ?? "0xFF81C784",
+      );
 }
 
 class RangeStyle {
@@ -105,8 +106,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   bool _isLoading = true;
   int _currentChapterIndex = 0;
   double _chapterProgress = 0.0;
-
-  // Settings
   double _fontSize = 18.0;
 
   List<UserHighlight> _userHighlights = [];
@@ -124,25 +123,31 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   double _speechRate = 0.5;
   bool _showAudioPlayer = false;
 
-  // ✅ AUDIO PROGRESS TRACKING
-  String _cachedAudioText = "";
-  int _currentWordStart = 0;
-  int _currentWordEnd = 0;
-  int _totalTextLength = 1; // Default to 1 to avoid division by zero
+  // ✅ AUDIO QUEUE SYSTEM (Fixes Android limit)
+  List<String> _audioQueue = [];
+  int _currentQueueIndex = 0;
+
+  // Progress tracking variables
+  int _totalTextLength = 1;
+  int _playedTextLength = 0; 
+  int _currentChunkProgress = 0; 
+
+  // ✅ ADDED: State Notifiers for the Bottom Sheet
+  // These allow the bottom sheet to update without closing/reopening
+  final ValueNotifier<bool> _playingNotifier = ValueNotifier(false);
+  final ValueNotifier<double> _progressNotifier = ValueNotifier(0.0);
 
   @override
   void initState() {
     super.initState();
-
     if (widget.initialChapterIndex > 0) {
       _currentChapterIndex = widget.initialChapterIndex;
     } else {
       _currentChapterIndex = 0;
     }
-
     _loadBookData();
     _loadUserHighlights();
-    _initTts(); // ✅ Init Audio
+    _initTts();
     _itemPositionsListener.itemPositions.addListener(_onScrollUpdate);
   }
 
@@ -151,43 +156,56 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     await flutterTts.setLanguage("en-US");
     await flutterTts.setPitch(1.0);
     await flutterTts.setSpeechRate(_speechRate);
+    await flutterTts.setVolume(1.0);
+    await flutterTts.awaitSpeakCompletion(true);
 
-    // iOS Audio Config
-    await flutterTts
-        .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
-          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-        ], IosTextToSpeechAudioMode.defaultMode);
+    if (Platform.isIOS) {
+      await flutterTts
+          .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+        IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+      ], IosTextToSpeechAudioMode.defaultMode);
+    }
 
-    // Handlers
+    if (Platform.isAndroid) {
+      try {
+        var voices = await flutterTts.getVoices;
+      } catch (e) {
+        debugPrint("TTS Setup Warning: $e");
+      }
+    }
+
     flutterTts.setStartHandler(() {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isSpeaking = true;
           _isPaused = false;
         });
+        // ✅ Update Notifier
+        _playingNotifier.value = true;
+      }
     });
 
     flutterTts.setCompletionHandler(() {
-      if (mounted)
-        setState(() {
-          _isSpeaking = false;
-          _isPaused = false;
-          _currentWordStart = 0;
-        });
+      if (mounted) {
+        _onChunkComplete();
+      }
     });
 
     flutterTts.setErrorHandler((msg) {
-      if (mounted)
+      debugPrint("TTS Error: $msg");
+      if (mounted) {
         setState(() {
           _isSpeaking = false;
           _isPaused = false;
         });
+        // ✅ Update Notifier
+        _playingNotifier.value = false;
+      }
     });
 
-    // ✅ PROGRESS HANDLER
     flutterTts.setProgressHandler((
       String text,
       int start,
@@ -196,28 +214,57 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     ) {
       if (mounted) {
         setState(() {
-          _currentWordStart = start;
-          _currentWordEnd = end;
+          _currentChunkProgress = start;
         });
+        // ✅ Update Progress Notifier
+        double rawProgress = (_playedTextLength + start) / _totalTextLength;
+        _progressNotifier.value = rawProgress.clamp(0.0, 1.0);
       }
     });
+  }
+
+  void _onChunkComplete() {
+    if (_currentQueueIndex < _audioQueue.length) {
+      _playedTextLength += _audioQueue[_currentQueueIndex].length;
+    }
+
+    if (_currentQueueIndex < _audioQueue.length - 1) {
+      _currentQueueIndex++;
+      _playCurrentChunk();
+    } else {
+      setState(() {
+        _isSpeaking = false;
+        _isPaused = false;
+        _currentQueueIndex = 0;
+        _playedTextLength = 0;
+        _currentChunkProgress = 0;
+      });
+      // ✅ Reset Notifiers
+      _playingNotifier.value = false;
+      _progressNotifier.value = 0.0;
+    }
+  }
+
+  Future<void> _playCurrentChunk() async {
+    if (_currentQueueIndex < _audioQueue.length) {
+      await flutterTts.speak(_audioQueue[_currentQueueIndex]);
+    }
   }
 
   @override
   void dispose() {
     _itemPositionsListener.itemPositions.removeListener(_onScrollUpdate);
     flutterTts.stop();
+    _playingNotifier.dispose();
+    _progressNotifier.dispose();
     super.dispose();
   }
 
-  // ✅ HELPER: STRIP HTML
   String _cleanHtmlForTts(String htmlContent) {
     String temp = htmlContent
         .replaceAll(RegExp(r'<br\s*/?>'), '. ')
         .replaceAll(RegExp(r'<\/p>'), '. ');
-
     temp = temp.replaceAll(RegExp(r'<[^>]*>'), '');
-
     temp = temp
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&amp;', ' and ')
@@ -225,13 +272,14 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         .replaceAll('&#8217;', "'")
         .replaceAll('&#8220;', '"')
         .replaceAll('&#8221;', '"');
-    return temp;
+    return temp.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  // ✅ 1. PREPARE AUDIO (Headphone Click)
+  // ✅ 1. PREPARE AUDIO
   void _prepareAudioPanel() {
     if (_showAudioPlayer) {
       setState(() => _showAudioPlayer = false);
+      _stop();
       return;
     }
 
@@ -241,32 +289,55 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     String content = _cleanHtmlForTts(
       _allChapters[_currentChapterIndex].content,
     );
-    String fullText = "$title. \n\n $content";
+    String fullText = "$title. $content";
+
+    List<String> chunks = [];
+    RegExp splitRegex = RegExp(r'(?<=[.?!])\s+');
+    List<String> sentences = fullText.split(splitRegex);
+
+    StringBuffer buffer = StringBuffer();
+    for (String sentence in sentences) {
+      if (buffer.length + sentence.length > 3000) {
+        chunks.add(buffer.toString());
+        buffer.clear();
+      }
+      buffer.write(sentence);
+      buffer.write(" ");
+    }
+    if (buffer.isNotEmpty) chunks.add(buffer.toString());
 
     setState(() {
-      _cachedAudioText = fullText;
-      _totalTextLength = fullText.length;
-      _currentWordStart = 0;
+      _audioQueue = chunks;
+      _currentQueueIndex = 0;
+      _totalTextLength = fullText.length > 0 ? fullText.length : 1;
+      _playedTextLength = 0;
+      _currentChunkProgress = 0;
       _showAudioPlayer = true;
-      _isSpeaking = false; // Wait for user to click play
+      _isSpeaking = false; 
       _isPaused = false;
     });
+    
+    // ✅ Reset Notifiers
+    _playingNotifier.value = false;
+    _progressNotifier.value = 0.0;
   }
 
-  // ✅ 2. TOGGLE PLAY (Safe Logic)
+  // ✅ 2. TOGGLE PLAY
   Future<void> _togglePlay() async {
-    if (_cachedAudioText.isEmpty) return;
+    if (_audioQueue.isEmpty) return;
 
     if (_isSpeaking && !_isPaused) {
       await _pause();
     } else {
-      // Resume or Start
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isSpeaking = true;
           _isPaused = false;
         });
-      await flutterTts.speak(_cachedAudioText);
+        // ✅ Update Notifier
+        _playingNotifier.value = true;
+      }
+      _playCurrentChunk();
     }
   }
 
@@ -276,9 +347,14 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       setState(() {
         _isSpeaking = false;
         _isPaused = false;
-        _currentWordStart = 0;
-        _showAudioPlayer = false; // Hide panel on stop
+        _currentQueueIndex = 0;
+        _playedTextLength = 0;
+        _currentChunkProgress = 0;
+        _showAudioPlayer = false;
       });
+      // ✅ Update Notifiers: Reset to Stopped State
+      _playingNotifier.value = false;
+      _progressNotifier.value = 0.0;
     }
   }
 
@@ -289,73 +365,74 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         _isSpeaking = false;
         _isPaused = true;
       });
+      // ✅ Update Notifier
+      _playingNotifier.value = false;
     }
   }
 
   void _changeSpeed(double newRate) {
     setState(() => _speechRate = newRate);
     flutterTts.setSpeechRate(newRate);
-    if (_isSpeaking) {
+    if (_isSpeaking && !_isPaused) {
       flutterTts.stop();
-      flutterTts.speak(_cachedAudioText); // Restart to apply speed
+      _playCurrentChunk();
     }
   }
 
-  // ✅ 3. SHOW FULL SCREEN PLAYER
   void _showFullScreenPlayer() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => FullScreenAudioPlayer(
-        bookMeta: widget.bookMeta,
-        chapterTitle: _allChapters[_currentChapterIndex].title,
-        isPlaying: _isSpeaking && !_isPaused,
-        currentProgress: (_currentWordStart / _totalTextLength).clamp(0.0, 1.0),
-        speechRate: _speechRate,
-        onPlayPause: () {
-          _togglePlay();
-          Navigator.pop(context); // Close to refresh state
-          _showFullScreenPlayer(); // Reopen immediately
-        },
-        onStop: () {
-          _stop();
-          Navigator.pop(context);
-        },
-        onChangeSpeed: (val) {
-          _changeSpeed(val);
-          Navigator.pop(context);
-          _showFullScreenPlayer();
-        },
-        onClose: () => Navigator.pop(context),
-      ),
+      builder: (context) {
+        // ✅ WRAP IN ValueListenableBuilder to update UI when parent state changes
+        return ValueListenableBuilder<bool>(
+          valueListenable: _playingNotifier,
+          builder: (context, isPlayingValue, child) {
+            return ValueListenableBuilder<double>(
+              valueListenable: _progressNotifier,
+              builder: (context, progressValue, child) {
+                return FullScreenAudioPlayer(
+                  bookMeta: widget.bookMeta,
+                  chapterTitle: _allChapters[_currentChapterIndex].title,
+                  isPlaying: isPlayingValue, // Use dynamic value
+                  currentProgress: progressValue, // Use dynamic value
+                  speechRate: _speechRate,
+                  onPlayPause: () => _togglePlay(),
+                  onStop: () {
+                    _stop();
+                    // Optionally close: Navigator.pop(context); 
+                    // Keeping it open as per your request, UI will now update.
+                  },
+                  onChangeSpeed: (val) {
+                    _changeSpeed(val);
+                  },
+                  onClose: () => Navigator.pop(context),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 
+  // ... (Rest of logic: _onScrollUpdate, _loadUserHighlights, etc. remains the same) ...
   void _onScrollUpdate() {
     final positions = _itemPositionsListener.itemPositions.value;
     if (positions.isEmpty || _currentViewItems.isEmpty) return;
-
     final firstVisible = positions
         .where((ItemPosition position) => position.itemTrailingEdge > 0)
         .reduce(
           (min, position) =>
               position.itemLeadingEdge < min.itemLeadingEdge ? position : min,
         );
-
     int currentIndex = firstVisible.index;
     int totalItems = _currentViewItems.length;
-
     double localProgress = 0.0;
-    if (totalItems > 0) {
-      localProgress = currentIndex / totalItems;
-    }
-
-    if (localProgress != _chapterProgress) {
-      setState(() {
-        _chapterProgress = localProgress.clamp(0.0, 1.0);
-      });
-    }
+    if (totalItems > 0) localProgress = currentIndex / totalItems;
+    if (localProgress != _chapterProgress)
+      setState(() => _chapterProgress = localProgress.clamp(0.0, 1.0));
     _saveLastReadPosition(currentIndex);
   }
 
@@ -389,7 +466,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     String colorHex,
   ) async {
     if (!selection.isValid || selection.isCollapsed) return;
-
     _userHighlights.removeWhere(
       (h) =>
           h.chapterIndex == _currentChapterIndex &&
@@ -397,7 +473,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
           h.startOffset < selection.end &&
           h.endOffset > selection.start,
     );
-
     final newHighlight = UserHighlight(
       chapterIndex: _currentChapterIndex,
       itemIndex: itemIndex,
@@ -405,35 +480,31 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       endOffset: selection.end,
       colorHex: colorHex,
     );
-
     setState(() {
       _userHighlights.add(newHighlight);
       _currentSelection = null;
     });
-
     final prefs = await SharedPreferences.getInstance();
     final String jsonString = json.encode(
       _userHighlights.map((h) => h.toJson()).toList(),
     );
     await prefs.setString('highlights_${widget.bookMeta.id}', jsonString);
-
-    if (mounted) {
+    if (mounted)
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Highlight saved!"),
           duration: Duration(milliseconds: 800),
         ),
       );
-    }
   }
 
   Future<void> _clearHighlightsForItem(int itemIndex) async {
-    setState(() {
-      _userHighlights.removeWhere(
+    setState(
+      () => _userHighlights.removeWhere(
         (h) =>
             h.itemIndex == itemIndex && h.chapterIndex == _currentChapterIndex,
-      );
-    });
+      ),
+    );
     final prefs = await SharedPreferences.getInstance();
     final String jsonString = json.encode(
       _userHighlights.map((h) => h.toJson()).toList(),
@@ -446,23 +517,19 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         .replaceAll('<br>', '\n')
         .replaceAll('<br/>', '\n')
         .replaceAll(RegExp(r'\n\s*\n'), '\n\n');
-
     List<RangeStyle> boldRanges = [];
     StringBuffer cleanBuffer = StringBuffer();
     RegExp boldExp = RegExp(r'<b>(.*?)</b>', dotAll: true);
-
     String remaining = processed;
     while (remaining.isNotEmpty) {
       Match? match = boldExp.firstMatch(remaining);
       if (match != null) {
         String before = remaining.substring(0, match.start);
         cleanBuffer.write(before);
-
         String boldContent = match.group(1) ?? "";
         int start = cleanBuffer.length;
         cleanBuffer.write(boldContent);
         int end = cleanBuffer.length;
-
         boldRanges.add(RangeStyle(start: start, end: end, isBold: true));
         remaining = remaining.substring(match.end);
       } else {
@@ -470,7 +537,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         break;
       }
     }
-
     return {'text': cleanBuffer.toString(), 'boldRanges': boldRanges};
   }
 
@@ -481,7 +547,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
       );
       final Map<String, dynamic> data = json.decode(response);
       final List<dynamic> chapterList = data['chapters'];
-
       List<Chapter> tempChapters = [];
       for (int i = 0; i < chapterList.length; i++) {
         final c = chapterList[i];
@@ -493,25 +558,20 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
           ),
         );
       }
-
       _allChapters = tempChapters;
-
       if (widget.initialChapterIndex == 0 && widget.initialIndex == 0) {
         final prefs = await SharedPreferences.getInstance();
         _currentChapterIndex =
             prefs.getInt('last_read_chapter_${widget.bookMeta.id}') ?? 0;
       }
-
       await _loadChapterIntoView(
         _currentChapterIndex,
         resetScroll: widget.initialIndex == 0,
       );
-
-      if (widget.initialIndex > 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToIndex(widget.initialIndex);
-        });
-      }
+      if (widget.initialIndex > 0)
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _scrollToIndex(widget.initialIndex),
+        );
     } catch (e) {
       debugPrint("Error loading book: $e");
       if (mounted) setState(() => _isLoading = false);
@@ -522,23 +582,15 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     int chapterIndex, {
     bool resetScroll = true,
   }) async {
-    // ✅ Stop Audio & Hide Player on Chapter Change
     await _stop();
-    if (mounted) setState(() => _showAudioPlayer = false);
-
     setState(() => _isLoading = true);
-
     if (chapterIndex < 0 || chapterIndex >= _allChapters.length) {
       setState(() => _isLoading = false);
       return;
     }
-
     await Future.delayed(const Duration(milliseconds: 50));
-
     final Chapter c = _allChapters[chapterIndex];
     List<BookItem> tempItems = [];
-
-    // Header
     tempItems.add(
       BookItem(
         type: ItemType.header,
@@ -546,32 +598,24 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         chapterIndex: chapterIndex,
       ),
     );
-
-    // Content Parsing
     var parsed = _parseHtmlContent(c.content);
     String fullCleanText = parsed['text'];
     List<RangeStyle> fullBoldRanges = parsed['boldRanges'];
-
     List<String> hardParagraphs = fullCleanText.split('\n\n');
     int currentGlobalOffset = 0;
-
     for (String paragraph in hardParagraphs) {
       if (paragraph.trim().isEmpty) {
         currentGlobalOffset += paragraph.length + 2;
         continue;
       }
-
       int paraStart = currentGlobalOffset;
       int paraEnd = paraStart + paragraph.length;
-
       List<int> splitPoints = [];
       for (var r in fullBoldRanges) {
-        if (r.start > paraStart && r.start < paraEnd) {
+        if (r.start > paraStart && r.start < paraEnd)
           splitPoints.add(r.start - paraStart);
-        }
       }
       splitPoints.sort();
-
       List<String> boldSplitChunks = [];
       int previousSplit = 0;
       for (int point in splitPoints) {
@@ -579,13 +623,10 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         previousSplit = point;
       }
       boldSplitChunks.add(paragraph.substring(previousSplit).trim());
-
       for (String chunk in boldSplitChunks) {
         if (chunk.isEmpty) continue;
-
         RegExp sentenceSplit = RegExp(r'(?<=[.?!])\s+');
         List<String> sentences = chunk.split(sentenceSplit);
-
         if (sentences.length <= 8) {
           _addContentItem(
             tempItems,
@@ -601,7 +642,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
             buffer.write(s.trim());
             buffer.write(" ");
             sentenceCount++;
-
             if (sentenceCount >= 8 || buffer.length > 800) {
               _addContentItem(
                 tempItems,
@@ -614,7 +654,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
               sentenceCount = 0;
             }
           }
-          if (buffer.isNotEmpty) {
+          if (buffer.isNotEmpty)
             _addContentItem(
               tempItems,
               buffer.toString().trim(),
@@ -622,17 +662,13 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
               fullBoldRanges,
               currentGlobalOffset,
             );
-          }
         }
       }
       currentGlobalOffset += paragraph.length + 2;
     }
-
-    // Navigation Item
     tempItems.add(
       BookItem(type: ItemType.navigation, text: "", chapterIndex: chapterIndex),
     );
-
     if (mounted) {
       setState(() {
         _currentViewItems = tempItems;
@@ -640,7 +676,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         _isLoading = false;
         _chapterProgress = 0.0;
       });
-
       if (resetScroll) {
         if (_itemScrollController.isAttached)
           _itemScrollController.jumpTo(index: 0);
@@ -674,9 +709,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   }
 
   void _navigateToChapter(int index) {
-    if (index >= 0 && index < _allChapters.length) {
-      _loadChapterIntoView(index);
-    }
+    if (index >= 0 && index < _allChapters.length) _loadChapterIntoView(index);
   }
 
   void _scrollToIndex(int index) {
@@ -691,9 +724,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         if (_itemScrollController.isAttached) {
           _itemScrollController.jumpTo(index: index);
           timer.cancel();
-        } else if (timer.tick > 20) {
-          timer.cancel();
-        }
+        } else if (timer.tick > 20) timer.cancel();
       });
     }
   }
@@ -707,11 +738,9 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     final String text = item.text;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isHeader = item.type == ItemType.header;
-
     final Color textColor = isHeader
         ? (isDark ? Colors.white : const Color(0xFF06275C))
         : (Theme.of(context).textTheme.bodyMedium?.color ?? Colors.black87);
-
     final TextStyle baseStyle = isHeader
         ? TextStyle(
             fontSize: _fontSize + 6,
@@ -720,29 +749,23 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
             height: 1.3,
           )
         : TextStyle(fontSize: _fontSize, height: 1.8, fontFamily: 'Georgia');
-
     List<Map<String, dynamic>> charStyles = List.generate(
       text.length,
       (index) => {'isBold': false, 'bgColor': null},
     );
-
     for (var r in item.boldRanges) {
-      for (int i = r.start; i < r.end && i < text.length; i++) {
+      for (int i = r.start; i < r.end && i < text.length; i++)
         charStyles[i]['isBold'] = true;
-      }
     }
-
     final myHighlights = _userHighlights.where(
       (h) => h.chapterIndex == _currentChapterIndex && h.itemIndex == itemIndex,
     );
     for (var h in myHighlights) {
       int safeStart = h.startOffset.clamp(0, text.length);
       int safeEnd = h.endOffset.clamp(0, text.length);
-      for (int i = safeStart; i < safeEnd; i++) {
+      for (int i = safeStart; i < safeEnd; i++)
         charStyles[i]['bgColor'] = Color(int.parse(h.colorHex));
-      }
     }
-
     if (query != null && query.isNotEmpty) {
       String lowerText = text.toLowerCase();
       String lowerQuery = query.toLowerCase();
@@ -761,13 +784,10 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         );
       }
     }
-
     List<TextSpan> spans = [];
     if (text.isEmpty) return spans;
-
     int currentStart = 0;
     var currentStyle = charStyles[0];
-
     for (int i = 1; i < text.length; i++) {
       var style = charStyles[i];
       if (style['isBold'] != currentStyle['isBold'] ||
@@ -800,7 +820,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         ),
       ),
     );
-
     return spans;
   }
 
@@ -856,15 +875,17 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
     );
   }
 
-  // ✅ MINI AUDIO PLAYER (Expandable)
+  // ✅ UPDATED MINI PLAYER WITH THEME SUPPORT
   Widget _buildMiniPlayer(bool isDark) {
     if (!_showAudioPlayer) return const SizedBox.shrink();
-
+    
     final bgColor = isDark ? Colors.grey[900] : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
+    // Fix for high contrast play button in dark mode
+    final iconColor = isDark ? Colors.white : Theme.of(context).primaryColor;
 
     return GestureDetector(
-      onTap: _showFullScreenPlayer, // ✅ EXPAND ON CLICK
+      onTap: _showFullScreenPlayer,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
         decoration: BoxDecoration(
@@ -880,7 +901,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
         ),
         child: Row(
           children: [
-            // Cover Thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: Image.asset(
@@ -891,7 +911,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
               ),
             ),
             const SizedBox(width: 12),
-            // Title & Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -919,7 +938,6 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                 ],
               ),
             ),
-            // Play/Pause Button
             IconButton(
               icon: Icon(
                 _isSpeaking && !_isPaused
@@ -927,8 +945,9 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                     : Icons.play_circle_fill,
               ),
               iconSize: 40,
-              color: Theme.of(context).primaryColor,
-              onPressed: _togglePlay, // Local toggle
+              // ✅ USING CONTRAST COLOR
+              color: iconColor,
+              onPressed: _togglePlay,
             ),
           ],
         ),
@@ -940,14 +959,12 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final appBarColor = isDark ? Colors.grey[900] : const Color(0xFF06275C);
-
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.bookMeta.title),
         backgroundColor: appBarColor,
         foregroundColor: Colors.white,
         actions: [
-          // ✅ AUDIO BUTTON (Prepares only)
           IconButton(
             icon: const Icon(Icons.headphones),
             tooltip: "Listen",
@@ -1034,14 +1051,12 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
           ],
         ),
       ),
-      // ✅ MINI PLAYER AT BOTTOM
       bottomSheet: _showAudioPlayer ? _buildMiniPlayer(isDark) : null,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Stack(
               children: [
                 ScrollablePositionedList.builder(
-                  // Padding for mini player
                   padding: _showAudioPlayer
                       ? const EdgeInsets.only(bottom: 90)
                       : EdgeInsets.zero,
@@ -1127,6 +1142,30 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
                                   Colors.green.shade300,
                                   editableTextState,
                                 ),
+                                _buildColorButton(
+                                  index,
+                                  "0xFFFFF59D",
+                                  Colors.yellow.shade200,
+                                  editableTextState,
+                                ),
+                                _buildColorButton(
+                                  index,
+                                  "0xFFFFB74D",
+                                  Colors.orange.shade300,
+                                  editableTextState,
+                                ),
+                                _buildColorButton(
+                                  index,
+                                  "0xFFF06292",
+                                  Colors.pink.shade300,
+                                  editableTextState,
+                                ),
+                                _buildColorButton(
+                                  index,
+                                  "0xFF64B5F6",
+                                  Colors.blue.shade300,
+                                  editableTextState,
+                                ),
                                 TextSelectionToolbarTextButton(
                                   padding: const EdgeInsets.all(12.0),
                                   onPressed: () {
@@ -1210,7 +1249,7 @@ class _EGWBookDetailScreenState extends State<EGWBookDetailScreen> {
   }
 }
 
-// ✅ NEW FULL SCREEN AUDIO PLAYER WIDGET
+// ✅ UPDATED FULL SCREEN AUDIO PLAYER WITH THEME SUPPORT
 class FullScreenAudioPlayer extends StatelessWidget {
   final BookMeta bookMeta;
   final String chapterTitle;
@@ -1238,16 +1277,26 @@ class FullScreenAudioPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // Theme Colors
+    final backgroundColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    
+    // Play Button Logic: High Contrast (White Circle in Dark Mode)
+    final circleColor = isDark ? Colors.white : Theme.of(context).primaryColor;
+    final iconColor = isDark ? Colors.black : Colors.white;
+    
+    // Slider Logic: Brighter Color in Dark Mode
+    final sliderColor = isDark ? Colors.tealAccent : Theme.of(context).primaryColor;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9, // 90% height
+      height: MediaQuery.of(context).size.height * 0.9,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: backgroundColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
       ),
       child: Column(
         children: [
-          // Close Handle
           Container(
             margin: const EdgeInsets.only(top: 15, bottom: 30),
             width: 50,
@@ -1257,8 +1306,6 @@ class FullScreenAudioPlayer extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
           ),
-
-          // Book Cover
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -1279,10 +1326,7 @@ class FullScreenAudioPlayer extends StatelessWidget {
               ),
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Text Info
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -1290,9 +1334,10 @@ class FullScreenAudioPlayer extends StatelessWidget {
                 Text(
                   chapterTitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
+                    color: textColor, // ✅ Theme Text
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1304,10 +1349,7 @@ class FullScreenAudioPlayer extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Progress Bar (Visual Only for TTS)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -1316,7 +1358,7 @@ class FullScreenAudioPlayer extends StatelessWidget {
                   value: currentProgress,
                   backgroundColor: Colors.grey[300],
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).primaryColor,
+                    sliderColor, // ✅ Theme Slider
                   ),
                   minHeight: 6,
                   borderRadius: BorderRadius.circular(3),
@@ -1332,18 +1374,16 @@ class FullScreenAudioPlayer extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(height: 30),
-
-          // Controls
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              // Speed
               DropdownButton<double>(
                 value: speechRate,
                 underline: Container(),
-                icon: const Icon(Icons.speed),
+                icon: Icon(Icons.speed, color: textColor),
+                dropdownColor: backgroundColor, // ✅ Theme Dropdown
+                style: TextStyle(color: textColor), // ✅ Theme Text
                 items: [0.3, 0.5, 0.75, 1.0, 1.25]
                     .map(
                       (rate) => DropdownMenuItem(
@@ -1356,22 +1396,18 @@ class FullScreenAudioPlayer extends StatelessWidget {
                   if (val != null) onChangeSpeed(val);
                 },
               ),
-
-              // Play/Pause
               CircleAvatar(
                 radius: 35,
-                backgroundColor: Theme.of(context).primaryColor,
+                backgroundColor: circleColor, // ✅ Theme Circle
                 child: IconButton(
                   icon: Icon(
                     isPlaying ? Icons.pause : Icons.play_arrow,
                     size: 35,
                   ),
-                  color: Colors.white,
+                  color: iconColor, // ✅ Theme Icon
                   onPressed: onPlayPause,
                 ),
               ),
-
-              // Stop/Close
               IconButton(
                 icon: const Icon(Icons.stop_circle_outlined, size: 35),
                 color: Colors.redAccent,
